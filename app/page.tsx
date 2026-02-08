@@ -617,7 +617,7 @@ export default function Home() {
 
   const geoDetail =
     geoStatus === "ready"
-      ? `Ponto ${GEOFENCE.plusCode} · Distancia ${distanceLabel} · ${insideLabel} · Atualizado ha ${
+      ? `Ponto ${GEOFENCE.plusCode} - Distancia ${distanceLabel} - ${insideLabel} - Atualizado ha ${
           geoMinutesAgo ?? 0
         } min`
       : geoStatus === "loading"
