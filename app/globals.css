@@ -204,6 +204,26 @@ button {
   box-shadow: 0 18px 40px rgba(47, 72, 88, 0.35);
 }
 
+.shift-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.shift-note {
+  margin-top: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.shift-note.success {
+  color: #2f6e4f;
+}
+
+.shift-note.error {
+  color: #b24a4a;
+}
+
 .shift-button:focus-visible,
 .menu-toggle:focus-visible,
 .menu-close:focus-visible,
@@ -850,6 +870,14 @@ select:focus-visible {
 .gps-status span {
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.gps-meta {
+  margin-top: 6px;
+  display: grid;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 
 .gps-dot {

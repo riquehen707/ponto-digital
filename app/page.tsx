@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type GeoStatus = "idle" | "loading" | "ready" | "error";
 
@@ -8,6 +8,8 @@ type GeoInfo = {
   accuracy?: number;
   updatedAt?: Date;
   error?: string;
+  distance?: number;
+  inside?: boolean;
 };
 
 type Role = "admin" | "staff";
@@ -20,7 +22,6 @@ type Account = {
 };
 
 type DemoAccount = Account & {
-  password: string;
   token: string;
 };
 
@@ -39,7 +40,7 @@ type StaffProfile = {
   role: StaffRole;
   shift: string;
   workDays: number[];
-  pay: PayInfo;
+  pay?: PayInfo;
 };
 
 type ScheduleEntry = {
@@ -50,13 +51,23 @@ type ScheduleEntry = {
   tone: "work" | "manager" | "cleaning";
 };
 
+type ShiftNoticeTone = "default" | "success" | "error";
+
+const GEOFENCE = {
+  name: "VH89+92 Teresopolis, Alagoinhas - BA",
+  plusCode: "VH89+92",
+  fullCode: "59V3VH89+92",
+  lat: -12.1340625,
+  lng: -38.4324375,
+  radiusMeters: 120,
+};
+
 const DEMO_ACCOUNTS: DemoAccount[] = [
   {
     id: "admin",
     name: "Henrique Admin",
     email: "admin@empresa.com",
     role: "admin",
-    password: "admin123",
     token: "admin-hq",
   },
   {
@@ -64,7 +75,6 @@ const DEMO_ACCOUNTS: DemoAccount[] = [
     name: "Ayra",
     email: "ayra@empresa.com",
     role: "staff",
-    password: "1234",
     token: "ayra-2026",
   },
   {
@@ -72,13 +82,27 @@ const DEMO_ACCOUNTS: DemoAccount[] = [
     name: "Nathyeli",
     email: "nathyeli@empresa.com",
     role: "staff",
-    password: "1234",
     token: "nathyeli-2026",
+  },
+  {
+    id: "henrique-teste",
+    name: "Henrique Teste",
+    email: "teste@empresa.com",
+    role: "staff",
+    token: "henrique-teste",
   },
 ];
 
-const STAFF_ACCOUNTS = DEMO_ACCOUNTS.filter(
-  (account) => account.role === "staff"
+const TEAM_ACCOUNTS = DEMO_ACCOUNTS.filter(
+  (account) => account.role === "staff" && account.id !== "henrique-teste"
+);
+
+const TEST_ACCOUNT = DEMO_ACCOUNTS.find(
+  (account) => account.id === "henrique-teste"
+);
+
+const ADMIN_ACCOUNTS = DEMO_ACCOUNTS.filter(
+  (account) => account.role === "admin"
 );
 
 const WEEK_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
@@ -116,7 +140,7 @@ const STAFF_PROFILES: StaffProfile[] = [
   {
     id: "mariza",
     name: "Mariza Santos",
-    scheduleName: "Mariza Santos",
+    scheduleName: "Mariza (gerente)",
     role: "manager",
     shift: "Gerente (sem ponto)",
     workDays: [4, 5, 6, 0, 1],
@@ -202,22 +226,48 @@ const isSameDay = (a: Date, b: Date) =>
   a.getMonth() === b.getMonth() &&
   a.getDate() === b.getDate();
 
+const toRadians = (value: number) => (value * Math.PI) / 180;
+
+const getDistanceMeters = (
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+) => {
+  const earthRadius = 6371000;
+  const deltaLat = toRadians(lat2 - lat1);
+  const deltaLng = toRadians(lng2 - lng1);
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(deltaLng / 2) *
+      Math.sin(deltaLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadius * c;
+};
+
 export default function Home() {
   const [now, setNow] = useState(() => new Date());
   const [shiftActive, setShiftActive] = useState(false);
+  const [shiftNotice, setShiftNotice] = useState("");
+  const [shiftNoticeTone, setShiftNoticeTone] = useState<ShiftNoticeTone>("default");
   const [menuOpen, setMenuOpen] = useState(false);
   const [geoStatus, setGeoStatus] = useState<GeoStatus>("idle");
   const [geoInfo, setGeoInfo] = useState<GeoInfo>({});
   const [viewMonth, setViewMonth] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [currentUser, setCurrentUser] = useState<Account | null>(null);
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [origin, setOrigin] = useState("");
   const [copiedToken, setCopiedToken] = useState("");
 
+  const watchIdRef = useRef<number | null>(null);
+  const shiftActiveRef = useRef(false);
+
   const isAdmin = currentUser?.role === "admin";
+  const canPunch = currentUser?.role === "staff";
+
   const personalProfile =
     currentUser?.role === "staff"
       ? STAFF_PROFILES.find((profile) => profile.id === currentUser.id) ?? null
@@ -227,6 +277,10 @@ export default function Home() {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    shiftActiveRef.current = shiftActive;
+  }, [shiftActive]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -273,43 +327,175 @@ export default function Home() {
       role: matchingAccount.role,
     });
     setLoginError("");
-    setLoginPassword("");
     window.history.replaceState({}, "", window.location.pathname);
   }, [currentUser]);
 
-  const handleLogin = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const email = loginEmail.trim().toLowerCase();
-    const matchingAccount = DEMO_ACCOUNTS.find(
-      (account) =>
-        account.email.toLowerCase() === email &&
-        account.password === loginPassword
-    );
+  useEffect(() => {
+    return () => {
+      if (typeof navigator !== "undefined" && navigator.geolocation) {
+        if (watchIdRef.current !== null) {
+          navigator.geolocation.clearWatch(watchIdRef.current);
+          watchIdRef.current = null;
+        }
+      }
+    };
+  }, []);
 
-    if (!matchingAccount) {
-      setLoginError("Credenciais invalidas");
+  const stopWatch = () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      return;
+    }
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+  };
+
+  const updateGeoFromPosition = (position: GeolocationPosition) => {
+    const distance = getDistanceMeters(
+      position.coords.latitude,
+      position.coords.longitude,
+      GEOFENCE.lat,
+      GEOFENCE.lng
+    );
+    const inside = distance <= GEOFENCE.radiusMeters;
+
+    setGeoStatus("ready");
+    setGeoInfo({
+      accuracy: Math.round(position.coords.accuracy),
+      updatedAt: new Date(),
+      distance,
+      inside,
+    });
+
+    return inside;
+  };
+
+  const requestLocation = () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setGeoStatus("error");
+      setGeoInfo({ error: "Geolocalizacao indisponivel." });
       return;
     }
 
-    setCurrentUser({
-      id: matchingAccount.id,
-      name: matchingAccount.name,
-      email: matchingAccount.email,
-      role: matchingAccount.role,
-    });
-    setLoginError("");
-    setLoginPassword("");
-    if (typeof window !== "undefined") {
-      window.history.replaceState({}, "", window.location.pathname);
+    setGeoStatus("loading");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        updateGeoFromPosition(position);
+      },
+      () => {
+        setGeoStatus("error");
+        setGeoInfo({ error: "Permissao negada ou indisponivel." });
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  };
+
+  const startWatch = () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      return;
     }
-    setMenuOpen(false);
+    if (watchIdRef.current !== null) {
+      return;
+    }
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const inside = updateGeoFromPosition(position);
+        if (!inside && shiftActiveRef.current) {
+          setShiftActive(false);
+          setShiftNotice("Saiu do ponto, turno encerrado automaticamente.");
+          setShiftNoticeTone("error");
+          stopWatch();
+        }
+      },
+      () => {
+        setGeoStatus("error");
+        setGeoInfo({ error: "Sinal de GPS perdido." });
+        if (shiftActiveRef.current) {
+          setShiftNotice("Sinal perdido. Verifique o GPS.");
+          setShiftNoticeTone("error");
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  };
+
+  const attemptStartShift = () => {
+    if (!canPunch) {
+      setShiftNotice("Conta sem ponto.");
+      setShiftNoticeTone("default");
+      return;
+    }
+
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setGeoStatus("error");
+      setGeoInfo({ error: "Geolocalizacao indisponivel." });
+      setShiftNotice("Geolocalizacao indisponivel.");
+      setShiftNoticeTone("error");
+      return;
+    }
+
+    setShiftNotice("");
+    setShiftNoticeTone("default");
+    setGeoStatus("loading");
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const inside = updateGeoFromPosition(position);
+        if (!inside) {
+          setShiftActive(false);
+          setShiftNotice("Voce esta fora do ponto permitido.");
+          setShiftNoticeTone("error");
+          return;
+        }
+
+        setShiftActive(true);
+        setShiftNotice("Turno iniciado dentro do raio.");
+        setShiftNoticeTone("success");
+        startWatch();
+      },
+      () => {
+        setGeoStatus("error");
+        setGeoInfo({ error: "Permissao negada ou indisponivel." });
+        setShiftNotice("Nao foi possivel obter o GPS.");
+        setShiftNoticeTone("error");
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0,
+      }
+    );
+  };
+
+  const handleShiftToggle = () => {
+    if (shiftActive) {
+      setShiftActive(false);
+      setShiftNotice("Turno encerrado.");
+      setShiftNoticeTone("default");
+      stopWatch();
+      return;
+    }
+
+    attemptStartShift();
   };
 
   const handleLogout = () => {
     setCurrentUser(null);
-    setLoginEmail("");
-    setLoginPassword("");
     setCopiedToken("");
+    setShiftActive(false);
+    setShiftNotice("");
+    setShiftNoticeTone("default");
+    stopWatch();
     setMenuOpen(false);
   };
 
@@ -406,42 +592,23 @@ export default function Home() {
     ? Math.max(0, Math.floor((now.getTime() - geoInfo.updatedAt.getTime()) / 60000))
     : null;
 
-  const requestLocation = () => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setGeoStatus("error");
-      setGeoInfo({ error: "Geolocalizacao indisponivel." });
-      return;
-    }
+  const distanceLabel =
+    geoInfo.distance !== undefined ? `${Math.round(geoInfo.distance)}m` : "--";
 
-    setGeoStatus("loading");
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setGeoStatus("ready");
-        setGeoInfo({
-          accuracy: Math.round(position.coords.accuracy),
-          updatedAt: new Date(),
-        });
-      },
-      () => {
-        setGeoStatus("error");
-        setGeoInfo({ error: "Permissao negada ou indisponivel." });
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
-      }
-    );
-  };
-
-  const handleShiftToggle = () => {
-    setShiftActive((prev) => !prev);
-    requestLocation();
-  };
+  const insideLabel =
+    geoInfo.inside === undefined
+      ? "Sem verificacao"
+      : geoInfo.inside
+        ? "Dentro do ponto"
+        : "Fora do ponto";
 
   const geoTitle =
     geoStatus === "ready"
-      ? "GPS pronto"
+      ? geoInfo.inside === undefined
+        ? "GPS pronto"
+        : geoInfo.inside
+          ? "No ponto"
+          : "Fora do ponto"
       : geoStatus === "loading"
         ? "Buscando sinal"
         : geoStatus === "error"
@@ -450,7 +617,9 @@ export default function Home() {
 
   const geoDetail =
     geoStatus === "ready"
-      ? `Raio ${geoInfo.accuracy ?? 0}m - Atualizado ha ${geoMinutesAgo ?? 0} min`
+      ? `Ponto ${GEOFENCE.plusCode} · Distancia ${distanceLabel} · ${insideLabel} · Atualizado ha ${
+          geoMinutesAgo ?? 0
+        } min`
       : geoStatus === "loading"
         ? "Solicitando localizacao"
         : geoStatus === "error"
@@ -481,49 +650,15 @@ export default function Home() {
         <main className="login-shell">
           <div className="login-card">
             <p className="login-brand">Ponto Vivo</p>
-            <h1>Entrar</h1>
+            <h1>Acesso por link</h1>
             <p className="login-subtitle">
-              Use sua conta para bater ponto e solicitar folga. Se recebeu um link
-              automatico, basta abrir.
+              Este app funciona apenas com links individuais. Abra o link enviado
+              pelo admin.
             </p>
-            <form className="login-form" onSubmit={handleLogin}>
-              <label htmlFor="login-email">Email</label>
-              <input
-                id="login-email"
-                type="email"
-                placeholder="seu@email.com"
-                value={loginEmail}
-                onChange={(event) => {
-                  setLoginEmail(event.target.value);
-                  setLoginError("");
-                }}
-                required
-              />
-
-              <label htmlFor="login-password">Senha</label>
-              <input
-                id="login-password"
-                type="password"
-                placeholder="Digite sua senha"
-                value={loginPassword}
-                onChange={(event) => {
-                  setLoginPassword(event.target.value);
-                  setLoginError("");
-                }}
-                required
-              />
-
-              <button className="shift-button login-button" type="submit">
-                Entrar
-              </button>
-              {loginError ? <span className="login-error">{loginError}</span> : null}
-            </form>
-
+            {loginError ? <span className="login-error">{loginError}</span> : null}
             <div className="login-hint">
-              <span>Demo:</span>
-              <span>admin@empresa.com / admin123</span>
-              <span>ayra@empresa.com / 1234</span>
-              <span>nathyeli@empresa.com / 1234</span>
+              <span>Precisa de acesso?</span>
+              <span>Fale com o admin para gerar seu link.</span>
             </div>
           </div>
         </main>
@@ -669,7 +804,10 @@ export default function Home() {
               ) : null}
               <div className="day-entries">
                 {selectedEntries.map((entry) => (
-                  <div key={`${entry.title}-${entry.time}`} className={`day-entry ${entry.tone}`}>
+                  <div
+                    key={`${entry.title}-${entry.time}`}
+                    className={`day-entry ${entry.tone}`}
+                  >
                     <div className="day-entry-header">
                       <strong>{entry.title}</strong>
                       <span>{entry.time}</span>
@@ -683,13 +821,14 @@ export default function Home() {
                         ))}
                       </div>
                     ) : null}
-                    {entry.note ? <span className="entry-note">{entry.note}</span> : null}
+                    {entry.note ? (
+                      <span className="entry-note">{entry.note}</span>
+                    ) : null}
                   </div>
                 ))}
               </div>
             </div>
           </section>
-
           <section className="tool-card">
             <h3>Solicitar folga</h3>
             <p>Use o calendario para escolher o dia e enviar a solicitacao.</p>
@@ -727,13 +866,19 @@ export default function Home() {
 
           <section className="tool-card">
             <h3>GPS do ponto</h3>
-            <p>Geolocalizacao ativa para validar batidas dentro do raio permitido.</p>
+            <p>
+              Geolocalizacao ativa para validar batidas dentro do raio permitido.
+            </p>
             <div className="gps-status">
               <span className={`gps-dot ${geoStatus}`} aria-hidden="true" />
               <div>
                 <strong>{geoTitle}</strong>
                 <span>{geoDetail}</span>
               </div>
+            </div>
+            <div className="gps-meta">
+              <span>Ponto: {GEOFENCE.name}</span>
+              <span>Raio permitido: {GEOFENCE.radiusMeters}m</span>
             </div>
             <button
               className="ghost"
@@ -744,7 +889,6 @@ export default function Home() {
               {geoStatus === "loading" ? "Localizando..." : "Atualizar local"}
             </button>
           </section>
-
           <section className="tool-card">
             <h3>Resumo do dia</h3>
             <p>Acompanhe rapidamente o que esta acontecendo agora.</p>
@@ -800,7 +944,9 @@ export default function Home() {
             </button>
           </section>
 
-          <section className={`tool-card admin-card ${isAdmin ? "" : "admin-card--locked"}`}>
+          <section
+            className={`tool-card admin-card ${isAdmin ? "" : "admin-card--locked"}`}
+          >
             <div className="admin-header">
               <h3>Area admin</h3>
               <span className="admin-pill">Restrito</span>
@@ -825,10 +971,8 @@ export default function Home() {
                 </div>
 
                 <div className="admin-links">
-                  <p className="admin-links-title">
-                    Links de acesso automatico para a equipe
-                  </p>
-                  {STAFF_ACCOUNTS.map((account) => {
+                  <p className="admin-links-title">Links da equipe (ponto)</p>
+                  {TEAM_ACCOUNTS.map((account) => {
                     const link = `${origin || ""}/?autologin=${account.token}`;
                     return (
                       <div key={account.email} className="admin-link-row">
@@ -848,31 +992,73 @@ export default function Home() {
                   })}
                 </div>
 
+                {TEST_ACCOUNT ? (
+                  <div className="admin-links">
+                    <p className="admin-links-title">Conta de teste</p>
+                    <div className="admin-link-row">
+                      <div>
+                        <strong>{TEST_ACCOUNT.name}</strong>
+                        <span className="admin-link-text">
+                          {`${origin || ""}/?autologin=${TEST_ACCOUNT.token}`}
+                        </span>
+                      </div>
+                      <button
+                        className="ghost ghost--small"
+                        type="button"
+                        onClick={() => handleCopyLink(TEST_ACCOUNT.token)}
+                      >
+                        {copiedToken === TEST_ACCOUNT.token ? "Copiado" : "Copiar"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {ADMIN_ACCOUNTS.length ? (
+                  <div className="admin-links">
+                    <p className="admin-links-title">Link admin (privado)</p>
+                    {ADMIN_ACCOUNTS.map((account) => (
+                      <div key={account.email} className="admin-link-row">
+                        <div>
+                          <strong>{account.name}</strong>
+                          <span className="admin-link-text">
+                            {`${origin || ""}/?autologin=${account.token}`}
+                          </span>
+                        </div>
+                        <button
+                          className="ghost ghost--small"
+                          type="button"
+                          onClick={() => handleCopyLink(account.token)}
+                        >
+                          {copiedToken === account.token ? "Copiado" : "Copiar"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
                 <div className="admin-payroll">
                   <p className="admin-links-title">Pagamentos (admin)</p>
-                  {STAFF_PROFILES.map((profile) => (
+                  {STAFF_PROFILES.filter((profile) => profile.pay).map((profile) => (
                     <div key={profile.id} className="payroll-item">
                       <div>
                         <strong>{profile.name}</strong>
                         <span className="payroll-meta">
-                          {profile.pay.type === "daily" ? "Diaria" : "Mensal"}
+                          {profile.pay?.type === "daily" ? "Diaria" : "Mensal"}
                         </span>
-                        {profile.pay.note ? (
+                        {profile.pay?.note ? (
                           <span className="payroll-note">{profile.pay.note}</span>
                         ) : null}
                       </div>
                       <span className="payroll-amount">
-                        {formatCurrency(profile.pay.amount)}
-                        {profile.pay.type === "daily" ? "/dia" : "/mes"}
+                        {formatCurrency(profile.pay?.amount ?? 0)}
+                        {profile.pay?.type === "daily" ? "/dia" : "/mes"}
                       </span>
                     </div>
                   ))}
                 </div>
               </>
             ) : (
-              <div className="admin-locked">
-                Entre com uma conta admin para acessar.
-              </div>
+              <div className="admin-locked">Entre com uma conta admin.</div>
             )}
           </section>
         </div>
@@ -890,9 +1076,19 @@ export default function Home() {
           aria-pressed={shiftActive}
           data-active={shiftActive}
           onClick={handleShiftToggle}
+          disabled={!canPunch}
         >
           {shiftActive ? "Finalizar turno" : "Iniciar turno"}
         </button>
+        {(!canPunch || shiftNotice) && (
+          <p
+            className={`shift-note ${
+              !canPunch ? "default" : shiftNoticeTone
+            }`}
+          >
+            {!canPunch ? "Conta sem ponto." : shiftNotice}
+          </p>
+        )}
       </main>
     </div>
   );
