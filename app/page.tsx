@@ -1,4 +1,4 @@
-"use client";
+ï»¿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -617,7 +617,7 @@ export default function Home() {
 
   const geoDetail =
     geoStatus === "ready"
-      ? `Ponto ${GEOFENCE.plusCode} · Distancia ${distanceLabel} · ${insideLabel} · Atualizado ha ${
+      ? `Ponto ${GEOFENCE.plusCode} Â· Distancia ${distanceLabel} Â· ${insideLabel} Â· Atualizado ha ${
           geoMinutesAgo ?? 0
         } min`
       : geoStatus === "loading"
