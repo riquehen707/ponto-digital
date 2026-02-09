@@ -26,6 +26,7 @@ type Employee = {
   email: string;
   role: Role;
   token: string;
+  externalId?: string;
   canPunch: boolean;
   shiftStart: string;
   shiftEnd: string;
@@ -79,7 +80,32 @@ type PaymentRecord = {
   kind: PaymentKind;
   note?: string;
   createdAt: string;
+  externalRef?: string;
 };
+
+type AdminUser = {
+  id: string;
+  name: string;
+  email: string;
+  password: string;
+};
+
+type Organization = {
+  id: string;
+  name: string;
+  slug: string;
+  employees: Employee[];
+  settings: Settings;
+  tasks: Task[];
+  completions: TaskCompletion[];
+  timeOffRequests: TimeOffRequest[];
+  payments: PaymentRecord[];
+  punchRecords: PunchRecord[];
+};
+
+type Session =
+  | { type: "admin"; adminId: string }
+  | { type: "staff"; orgId: string; employeeId: string };
 
 type PunchRecord = {
   id: string;
@@ -107,13 +133,9 @@ type Settings = {
 };
 
 type AppData = {
-  employees: Employee[];
-  settings: Settings;
-  tasks: Task[];
-  completions: TaskCompletion[];
-  timeOffRequests: TimeOffRequest[];
-  payments: PaymentRecord[];
-  punchRecords: PunchRecord[];
+  adminUsers: AdminUser[];
+  organizations: Organization[];
+  currentOrgId: string | null;
 };
 
 type ShiftNoticeTone = "default" | "success" | "error";
@@ -121,6 +143,7 @@ type ShiftNoticeTone = "default" | "success" | "error";
 type ReportRange = "week" | "month" | "30d";
 
 const STORAGE_KEY = "ponto-vivo-data-v1";
+const SESSION_KEY = "ponto-vivo-session-v1";
 
 const WEEK_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
 
@@ -237,7 +260,19 @@ const DEFAULT_TASKS: Task[] = [
   { id: "task-3", title: "Atendimento premium", points: 12, active: true },
 ];
 
-const DEFAULT_DATA: AppData = {
+const DEFAULT_ADMIN_USERS: AdminUser[] = [
+  {
+    id: "admin-1",
+    name: "Admin Principal",
+    email: "admin@empresa.com",
+    password: "admin123",
+  },
+];
+
+const DEFAULT_ORG: Organization = {
+  id: "org-principal",
+  name: "Empresa Principal",
+  slug: "empresa-principal",
   employees: DEFAULT_EMPLOYEES,
   settings: DEFAULT_SETTINGS,
   tasks: DEFAULT_TASKS,
@@ -245,6 +280,12 @@ const DEFAULT_DATA: AppData = {
   timeOffRequests: [],
   payments: [],
   punchRecords: [],
+};
+
+const DEFAULT_DATA: AppData = {
+  adminUsers: DEFAULT_ADMIN_USERS,
+  organizations: [DEFAULT_ORG],
+  currentOrgId: DEFAULT_ORG.id,
 };
 
 const formatCurrency = (value: number) =>
@@ -412,11 +453,36 @@ const generateToken = (base: string) => {
 
 const generateId = (base: string) => `${base}-${Date.now().toString(36)}`;
 
+const normalizeOrg = (
+  org: Partial<Organization>,
+  fallbackId: string,
+  fallbackName: string
+): Organization => {
+  const id = org.id || fallbackId || generateId("org");
+  const name = org.name?.trim() || fallbackName;
+  const slug = org.slug?.trim() || createSlug(name) || id;
+
+  return {
+    id,
+    name,
+    slug,
+    employees: Array.isArray(org.employees) ? org.employees : DEFAULT_EMPLOYEES,
+    settings: { ...DEFAULT_SETTINGS, ...(org.settings ?? {}) },
+    tasks: Array.isArray(org.tasks) ? org.tasks : DEFAULT_TASKS,
+    completions: Array.isArray(org.completions) ? org.completions : [],
+    timeOffRequests: Array.isArray(org.timeOffRequests) ? org.timeOffRequests : [],
+    payments: Array.isArray(org.payments) ? org.payments : [],
+    punchRecords: Array.isArray(org.punchRecords) ? org.punchRecords : [],
+  };
+};
+
 export default function Home() {
   const [data, setData] = useState<AppData>(DEFAULT_DATA);
   const [dataLoaded, setDataLoaded] = useState(false);
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [loginError, setLoginError] = useState("");
+  const [adminLogin, setAdminLogin] = useState({ email: "", password: "" });
+  const [adminLoginError, setAdminLoginError] = useState("");
   const [origin, setOrigin] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [geoStatus, setGeoStatus] = useState<GeoStatus>("idle");
@@ -433,6 +499,7 @@ export default function Home() {
     email: "",
     role: "staff" as Role,
     token: "",
+    externalId: "",
     canPunch: true,
     shiftStart: DEFAULT_SETTINGS.shiftStart,
     shiftEnd: DEFAULT_SETTINGS.shiftEnd,
@@ -458,35 +525,62 @@ export default function Home() {
     status: "planned" as PaymentStatus,
     kind: "daily" as PaymentKind,
     note: "",
+    externalRef: "",
+  });
+  const [orgForm, setOrgForm] = useState({ id: "", name: "", mode: "new" as "new" | "edit" });
+  const [adminProfileForm, setAdminProfileForm] = useState({
+    name: "",
+    email: "",
+    password: "",
   });
   const [now, setNow] = useState(() => new Date());
 
   const watchIdRef = useRef<number | null>(null);
   const shiftActiveRef = useRef(false);
 
-  const currentUser = data.employees.find((emp) => emp.id === currentUserId) ?? null;
-  const isAdmin = currentUser?.role === "admin";
-  const canPunch = currentUser?.canPunch ?? false;
+  const activeOrgId =
+    session?.type === "staff"
+      ? session.orgId
+      : data.currentOrgId ?? data.organizations[0]?.id ?? null;
+  const activeOrg =
+    data.organizations.find((org) => org.id === activeOrgId) ??
+    data.organizations[0] ??
+    null;
 
-  const personalProfile = currentUser?.role === "staff" ? currentUser : null;
-  const geofence = data.settings;
+  const adminUser =
+    session?.type === "admin"
+      ? data.adminUsers.find((admin) => admin.id === session.adminId) ?? null
+      : null;
+  const currentEmployee =
+    session?.type === "staff" && activeOrg
+      ? activeOrg.employees.find((emp) => emp.id === session.employeeId) ?? null
+      : null;
+  const currentEmployeeId = currentEmployee?.id ?? null;
 
-  const teamAccounts = data.employees.filter(
-    (employee) => employee.canPunch && !employee.isTest
-  );
-  const testAccount = data.employees.find((employee) => employee.isTest) ?? null;
-  const adminAccounts = data.employees.filter((employee) => employee.role === "admin");
+  const isAdmin = session?.type === "admin";
+  const canPunch = currentEmployee?.canPunch ?? false;
+  const displayName = isAdmin
+    ? adminUser?.name || "Admin"
+    : currentEmployee?.name || "Usuario";
+
+  const personalProfile = currentEmployee?.role === "staff" ? currentEmployee : null;
+  const geofence = activeOrg?.settings ?? DEFAULT_SETTINGS;
+
+  const teamAccounts = activeOrg
+    ? activeOrg.employees.filter((employee) => employee.canPunch && !employee.isTest)
+    : [];
+  const testAccount = activeOrg?.employees.find((employee) => employee.isTest) ?? null;
 
   const openRecord = useMemo(() => {
-    if (!currentUserId) {
+    if (!activeOrg || session?.type !== "staff") {
       return null;
     }
     return (
-      data.punchRecords.find(
-        (record) => record.userId === currentUserId && !record.endAt
+      activeOrg.punchRecords.find(
+        (record) => record.userId === session.employeeId && !record.endAt
       ) ?? null
     );
-  }, [data.punchRecords, currentUserId]);
+  }, [activeOrg, session]);
 
   const shiftActive = Boolean(openRecord);
 
@@ -527,20 +621,52 @@ export default function Home() {
       return;
     }
     try {
-      const parsed = JSON.parse(saved) as Partial<AppData>;
-      setData({
-        employees: Array.isArray(parsed.employees)
-          ? parsed.employees
-          : DEFAULT_DATA.employees,
-        settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
-        tasks: Array.isArray(parsed.tasks) ? parsed.tasks : DEFAULT_DATA.tasks,
-        completions: Array.isArray(parsed.completions) ? parsed.completions : [],
-        timeOffRequests: Array.isArray(parsed.timeOffRequests)
-          ? parsed.timeOffRequests
-          : [],
-        payments: Array.isArray(parsed.payments) ? parsed.payments : [],
-        punchRecords: Array.isArray(parsed.punchRecords) ? parsed.punchRecords : [],
-      });
+      const parsed = JSON.parse(saved) as Partial<AppData> & {
+        employees?: Employee[];
+        settings?: Settings;
+        tasks?: Task[];
+        completions?: TaskCompletion[];
+        timeOffRequests?: TimeOffRequest[];
+        payments?: PaymentRecord[];
+        punchRecords?: PunchRecord[];
+      };
+
+      if (Array.isArray(parsed.organizations)) {
+        const organizations = parsed.organizations.map((org, index) =>
+          normalizeOrg(org, `org-${index + 1}`, `Empresa ${index + 1}`)
+        );
+        setData({
+          adminUsers: Array.isArray(parsed.adminUsers)
+            ? parsed.adminUsers
+            : DEFAULT_DATA.adminUsers,
+          organizations: organizations.length ? organizations : DEFAULT_DATA.organizations,
+          currentOrgId:
+            parsed.currentOrgId ??
+            organizations[0]?.id ??
+            DEFAULT_DATA.currentOrgId,
+        });
+      } else if (Array.isArray(parsed.employees)) {
+        const org = normalizeOrg(
+          {
+            employees: parsed.employees,
+            settings: parsed.settings,
+            tasks: parsed.tasks,
+            completions: parsed.completions,
+            timeOffRequests: parsed.timeOffRequests,
+            payments: parsed.payments,
+            punchRecords: parsed.punchRecords,
+          },
+          "org-principal",
+          "Empresa Principal"
+        );
+        setData({
+          adminUsers: DEFAULT_DATA.adminUsers,
+          organizations: [org],
+          currentOrgId: org.id,
+        });
+      } else {
+        setData(DEFAULT_DATA);
+      }
     } catch {
       setData(DEFAULT_DATA);
     } finally {
@@ -556,7 +682,45 @@ export default function Home() {
   }, [data, dataLoaded]);
 
   useEffect(() => {
-    if (!dataLoaded || currentUserId || typeof window === "undefined") {
+    if (!dataLoaded || typeof window === "undefined") {
+      return;
+    }
+    const savedSession = window.localStorage.getItem(SESSION_KEY);
+    if (!savedSession) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(savedSession) as Session;
+      if (parsed.type === "admin") {
+        const exists = data.adminUsers.some((admin) => admin.id === parsed.adminId);
+        if (exists) {
+          setSession(parsed);
+        }
+      } else if (parsed.type === "staff") {
+        const org = data.organizations.find((item) => item.id === parsed.orgId);
+        const exists = org?.employees.some((emp) => emp.id === parsed.employeeId);
+        if (exists) {
+          setSession(parsed);
+        }
+      }
+    } catch {
+      window.localStorage.removeItem(SESSION_KEY);
+    }
+  }, [dataLoaded, data.adminUsers, data.organizations]);
+
+  useEffect(() => {
+    if (!dataLoaded || typeof window === "undefined") {
+      return;
+    }
+    if (session) {
+      window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    } else {
+      window.localStorage.removeItem(SESSION_KEY);
+    }
+  }, [dataLoaded, session]);
+
+  useEffect(() => {
+    if (!dataLoaded || session || typeof window === "undefined") {
       return;
     }
 
@@ -566,22 +730,85 @@ export default function Home() {
       return;
     }
 
-    const matchingAccount = data.employees.find((employee) => employee.token === token);
-    if (!matchingAccount) {
+    const orgParam = params.get("org");
+    let matchingOrg = orgParam
+      ? data.organizations.find((org) => org.id === orgParam)
+      : undefined;
+    if (!matchingOrg) {
+      matchingOrg = data.organizations.find((org) =>
+        org.employees.some((employee) => employee.token === token)
+      );
+    }
+    const matchingAccount = matchingOrg?.employees.find(
+      (employee) => employee.token === token
+    );
+    if (!matchingOrg || !matchingAccount) {
       setLoginError("Link invalido ou expirado");
       return;
     }
 
-    setCurrentUserId(matchingAccount.id);
+    setSession({ type: "staff", orgId: matchingOrg.id, employeeId: matchingAccount.id });
     setLoginError("");
     window.history.replaceState({}, "", window.location.pathname);
-  }, [dataLoaded, currentUserId, data.employees]);
+  }, [dataLoaded, session, data.organizations]);
 
   useEffect(() => {
-    if (currentUserId && !currentUser) {
-      setCurrentUserId(null);
+    if (!session) {
+      return;
     }
-  }, [currentUserId, currentUser]);
+    if (session.type === "admin") {
+      const exists = data.adminUsers.some((admin) => admin.id === session.adminId);
+      if (!exists) {
+        setSession(null);
+      }
+      return;
+    }
+    const org = data.organizations.find((item) => item.id === session.orgId);
+    const employee = org?.employees.find((emp) => emp.id === session.employeeId);
+    if (!employee) {
+      setSession(null);
+    }
+  }, [session, data.adminUsers, data.organizations]);
+
+  useEffect(() => {
+    if (!dataLoaded) {
+      return;
+    }
+    if (!data.organizations.length) {
+      return;
+    }
+    const exists = data.organizations.some((org) => org.id === data.currentOrgId);
+    if (!exists) {
+      setData((prev) => ({
+        ...prev,
+        currentOrgId: prev.organizations[0]?.id ?? null,
+      }));
+    }
+  }, [dataLoaded, data.organizations, data.currentOrgId]);
+
+  useEffect(() => {
+    if (!adminUser) {
+      return;
+    }
+    setAdminProfileForm({ name: adminUser.name, email: adminUser.email, password: "" });
+  }, [adminUser]);
+
+  useEffect(() => {
+    if (!activeOrg) {
+      return;
+    }
+    setEmployeeForm((prev) => ({
+      ...prev,
+      shiftStart: activeOrg.settings.shiftStart,
+      shiftEnd: activeOrg.settings.shiftEnd,
+    }));
+    setPaymentForm((prev) => ({
+      ...prev,
+      userId: "",
+      date: getLocalDateKey(new Date()),
+      externalRef: "",
+    }));
+  }, [activeOrgId, activeOrg]);
 
   useEffect(() => {
     if (!canPunch) {
@@ -598,6 +825,15 @@ export default function Home() {
   useEffect(() => {
     return () => stopWatch();
   }, []);
+
+  const updateOrg = (orgId: string, updater: (org: Organization) => Organization) => {
+    setData((prev) => ({
+      ...prev,
+      organizations: prev.organizations.map((org) =>
+        org.id === orgId ? updater(org) : org
+      ),
+    }));
+  };
 
   const stopWatch = () => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -687,7 +923,7 @@ export default function Home() {
   };
 
   const startShift = () => {
-    if (!currentUserId) {
+    if (!currentEmployeeId || !activeOrgId) {
       return;
     }
     if (!canPunch) {
@@ -719,13 +955,13 @@ export default function Home() {
 
         const newRecord: PunchRecord = {
           id: `rec_${Date.now()}`,
-          userId: currentUserId,
+          userId: currentEmployeeId,
           startAt: new Date().toISOString(),
         };
 
-        setData((prev) => ({
-          ...prev,
-          punchRecords: [...prev.punchRecords, newRecord],
+        updateOrg(activeOrgId, (org) => ({
+          ...org,
+          punchRecords: [...org.punchRecords, newRecord],
         }));
 
         setShiftNotice("Turno iniciado dentro do raio.");
@@ -746,14 +982,14 @@ export default function Home() {
   };
 
   const closeShift = (reason: "manual" | "geofence") => {
-    if (!openRecord) {
+    if (!openRecord || !activeOrgId) {
       return;
     }
     const closedAt = new Date().toISOString();
 
-    setData((prev) => ({
-      ...prev,
-      punchRecords: prev.punchRecords.map((record) =>
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      punchRecords: org.punchRecords.map((record) =>
         record.id === openRecord.id
           ? { ...record, endAt: closedAt, closedBy: reason }
           : record
@@ -773,7 +1009,8 @@ export default function Home() {
   };
 
   const handleLogout = () => {
-    setCurrentUserId(null);
+    setSession(null);
+    setAdminLoginError("");
     setCopiedToken("");
     setShiftNotice("");
     setShiftNoticeTone("default");
@@ -781,12 +1018,13 @@ export default function Home() {
     setMenuOpen(false);
   };
 
-  const handleCopyLink = async (token: string) => {
+  const handleCopyLink = async (token: string, orgId?: string) => {
     if (typeof navigator === "undefined") {
       return;
     }
 
-    const link = `${origin || ""}/?autologin=${token}`;
+    const orgParam = orgId ? `&org=${orgId}` : "";
+    const link = `${origin || ""}/?autologin=${token}${orgParam}`;
     try {
       await navigator.clipboard.writeText(link);
       setCopiedToken(token);
@@ -797,11 +1035,11 @@ export default function Home() {
   };
 
   const handleTaskComplete = (taskId: string) => {
-    if (!currentUserId) {
+    if (!currentEmployeeId || !activeOrgId || !activeOrg) {
       return;
     }
-    const alreadyCompleted = data.completions.some((completion) => {
-      if (completion.taskId !== taskId || completion.userId !== currentUserId) {
+    const alreadyCompleted = activeOrg.completions.some((completion) => {
+      if (completion.taskId !== taskId || completion.userId !== currentEmployeeId) {
         return false;
       }
       return isSameDay(new Date(completion.date), now);
@@ -814,18 +1052,18 @@ export default function Home() {
     const completion: TaskCompletion = {
       id: `cmp_${Date.now()}`,
       taskId,
-      userId: currentUserId,
+      userId: currentEmployeeId,
       date: new Date().toISOString(),
     };
 
-    setData((prev) => ({
-      ...prev,
-      completions: [...prev.completions, completion],
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      completions: [...org.completions, completion],
     }));
   };
 
   const handleAddTask = () => {
-    if (!taskForm.title.trim()) {
+    if (!taskForm.title.trim() || !activeOrgId) {
       return;
     }
     const newTask: Task = {
@@ -835,26 +1073,32 @@ export default function Home() {
       active: true,
     };
 
-    setData((prev) => ({
-      ...prev,
-      tasks: [...prev.tasks, newTask],
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      tasks: [...org.tasks, newTask],
     }));
     setTaskForm({ title: "", points: 10 });
   };
 
   const handleToggleTask = (taskId: string) => {
-    setData((prev) => ({
-      ...prev,
-      tasks: prev.tasks.map((task) =>
+    if (!activeOrgId) {
+      return;
+    }
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      tasks: org.tasks.map((task) =>
         task.id === taskId ? { ...task, active: !task.active } : task
       ),
     }));
   };
 
   const handleRemoveTask = (taskId: string) => {
-    setData((prev) => ({
-      ...prev,
-      tasks: prev.tasks.filter((task) => task.id !== taskId),
+    if (!activeOrgId) {
+      return;
+    }
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      tasks: org.tasks.filter((task) => task.id !== taskId),
     }));
   };
 
@@ -867,6 +1111,7 @@ export default function Home() {
       email: employee.email,
       role: employee.role,
       token: employee.token,
+      externalId: employee.externalId ?? "",
       canPunch: employee.canPunch,
       shiftStart: employee.shiftStart,
       shiftEnd: employee.shiftEnd,
@@ -887,9 +1132,10 @@ export default function Home() {
       email: "",
       role: "staff",
       token: "",
+      externalId: "",
       canPunch: true,
-      shiftStart: data.settings.shiftStart,
-      shiftEnd: data.settings.shiftEnd,
+      shiftStart: activeOrg?.settings.shiftStart ?? DEFAULT_SETTINGS.shiftStart,
+      shiftEnd: activeOrg?.settings.shiftEnd ?? DEFAULT_SETTINGS.shiftEnd,
       workDays: [],
       payType: "daily",
       payAmount: 0,
@@ -899,16 +1145,25 @@ export default function Home() {
   };
 
   const handleSaveEmployee = () => {
-    if (!employeeForm.name.trim()) {
+    if (!employeeForm.name.trim() || !activeOrgId) {
       return;
     }
 
     const slug = createSlug(employeeForm.name);
     const isNew = employeeMode === "new" || !editingEmployeeId;
     const id = isNew ? generateId(slug || "staff") : employeeForm.id;
-    const token = isNew
+    let token = isNew
       ? generateToken(slug || "staff")
       : employeeForm.token || generateToken(slug || "staff");
+
+    const tokenExists = data.organizations.some((org) =>
+      org.employees.some(
+        (employee) => employee.token === token && employee.id !== id
+      )
+    );
+    if (tokenExists) {
+      token = generateToken(slug || "staff");
+    }
 
     const newEmployee: Employee = {
       id,
@@ -916,6 +1171,7 @@ export default function Home() {
       email: employeeForm.email.trim(),
       role: employeeForm.role,
       token,
+      externalId: employeeForm.externalId.trim() || undefined,
       canPunch: employeeForm.canPunch,
       shiftStart: employeeForm.shiftStart,
       shiftEnd: employeeForm.shiftEnd,
@@ -930,15 +1186,15 @@ export default function Home() {
         : undefined,
     };
 
-    setData((prev) => {
-      const existing = prev.employees.some((employee) => employee.id === id);
+    updateOrg(activeOrgId, (org) => {
+      const existing = org.employees.some((employee) => employee.id === id);
       return {
-        ...prev,
+        ...org,
         employees: existing
-          ? prev.employees.map((employee) =>
+          ? org.employees.map((employee) =>
               employee.id === id ? newEmployee : employee
             )
-          : [...prev.employees, newEmployee],
+          : [...org.employees, newEmployee],
       };
     });
 
@@ -946,12 +1202,12 @@ export default function Home() {
   };
 
   const handleRemoveEmployee = (employeeId: string) => {
-    if (employeeId === currentUserId) {
+    if (!activeOrgId || employeeId === currentEmployeeId) {
       return;
     }
-    setData((prev) => ({
-      ...prev,
-      employees: prev.employees.filter((employee) => employee.id !== employeeId),
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      employees: org.employees.filter((employee) => employee.id !== employeeId),
     }));
   };
 
@@ -968,22 +1224,28 @@ export default function Home() {
   };
 
   const handleSettingsChange = (patch: Partial<Settings>) => {
-    setData((prev) => ({
-      ...prev,
-      settings: { ...prev.settings, ...patch },
+    if (!activeOrgId) {
+      return;
+    }
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      settings: { ...org.settings, ...patch },
     }));
   };
 
   const handleCleaningParticipantToggle = (id: string) => {
-    setData((prev) => {
-      const exists = prev.settings.cleaningParticipants.includes(id);
+    if (!activeOrgId || !activeOrg) {
+      return;
+    }
+    updateOrg(activeOrgId, (org) => {
+      const exists = org.settings.cleaningParticipants.includes(id);
       return {
-        ...prev,
+        ...org,
         settings: {
-          ...prev.settings,
+          ...org.settings,
           cleaningParticipants: exists
-            ? prev.settings.cleaningParticipants.filter((item) => item !== id)
-            : [...prev.settings.cleaningParticipants, id],
+            ? org.settings.cleaningParticipants.filter((item) => item !== id)
+            : [...org.settings.cleaningParticipants, id],
         },
       };
     });
@@ -1022,18 +1284,18 @@ export default function Home() {
 
   const requestMap = useMemo(() => {
     const map = new Map<string, TimeOffRequest>();
-    if (!currentUserId) {
+    if (!currentEmployeeId || !activeOrg) {
       return map;
     }
-    data.timeOffRequests
-      .filter((request) => request.userId === currentUserId)
+    activeOrg.timeOffRequests
+      .filter((request) => request.userId === currentEmployeeId)
       .forEach((request) => map.set(request.date, request));
     return map;
-  }, [data.timeOffRequests, currentUserId]);
+  }, [activeOrg, currentEmployeeId]);
 
   const selectedDateKey = useMemo(() => getLocalDateKey(selectedDate), [selectedDate]);
 
-  const selectedRequest = currentUserId
+  const selectedRequest = currentEmployeeId
     ? requestMap.get(selectedDateKey) ?? null
     : null;
 
@@ -1041,10 +1303,10 @@ export default function Home() {
     () =>
       buildScheduleEntries(
         selectedDate.getDay(),
-        data.employees,
-        data.settings
+        activeOrg?.employees ?? [],
+        activeOrg?.settings ?? DEFAULT_SETTINGS
       ),
-    [selectedDate, data.employees, data.settings]
+    [selectedDate, activeOrg]
   );
 
   const calendarDays = useMemo(() => {
@@ -1073,8 +1335,8 @@ export default function Home() {
       const dayType = getDayType(
         date.getDay(),
         personalProfile,
-        data.employees,
-        data.settings
+        activeOrg?.employees ?? [],
+        activeOrg?.settings ?? DEFAULT_SETTINGS
       );
       const request = requestMap.get(key);
 
@@ -1093,25 +1355,24 @@ export default function Home() {
   }, [
     viewMonth,
     selectedDate,
-    data.employees,
-    data.settings,
+    activeOrg,
     personalProfile,
     requestMap,
     now,
   ]);
 
   const activeTasks = useMemo(
-    () => data.tasks.filter((task) => task.active),
-    [data.tasks]
+    () => (activeOrg ? activeOrg.tasks.filter((task) => task.active) : []),
+    [activeOrg]
   );
 
   const completedToday = useMemo(() => {
     const set = new Set<string>();
-    if (!currentUserId) {
+    if (!currentEmployeeId || !activeOrg) {
       return set;
     }
-    data.completions.forEach((completion) => {
-      if (completion.userId !== currentUserId) {
+    activeOrg.completions.forEach((completion) => {
+      if (completion.userId !== currentEmployeeId) {
         return;
       }
       if (!isSameDay(new Date(completion.date), now)) {
@@ -1120,35 +1381,35 @@ export default function Home() {
       set.add(completion.taskId);
     });
     return set;
-  }, [data.completions, currentUserId, now]);
+  }, [activeOrg, currentEmployeeId, now]);
 
   const personalRequests = useMemo(() => {
-    if (!currentUserId) {
+    if (!currentEmployeeId || !activeOrg) {
       return [] as TimeOffRequest[];
     }
-    return data.timeOffRequests
-      .filter((request) => request.userId === currentUserId)
+    return activeOrg.timeOffRequests
+      .filter((request) => request.userId === currentEmployeeId)
       .slice()
       .sort((a, b) => b.date.localeCompare(a.date));
-  }, [data.timeOffRequests, currentUserId]);
+  }, [activeOrg, currentEmployeeId]);
 
   const adminRequests = useMemo(
     () =>
-      data.timeOffRequests
+      (activeOrg ? activeOrg.timeOffRequests : [])
         .slice()
         .sort((a, b) => a.date.localeCompare(b.date)),
-    [data.timeOffRequests]
+    [activeOrg]
   );
 
   const tasksById = useMemo(() => {
     const map = new Map<string, Task>();
-    data.tasks.forEach((task) => map.set(task.id, task));
+    (activeOrg?.tasks ?? []).forEach((task) => map.set(task.id, task));
     return map;
-  }, [data.tasks]);
+  }, [activeOrg]);
 
   const pointsByUser = useMemo(() => {
     const totals = new Map<string, number>();
-    data.completions.forEach((completion) => {
+    (activeOrg?.completions ?? []).forEach((completion) => {
       const completedAt = new Date(completion.date);
       if (completedAt < reportStart) {
         return;
@@ -1161,7 +1422,7 @@ export default function Home() {
       );
     });
     return totals;
-  }, [data.completions, tasksById, reportStart]);
+  }, [activeOrg, tasksById, reportStart]);
 
   const formatMinutes = (value: number) => {
     const rounded = Math.round(value);
@@ -1171,7 +1432,7 @@ export default function Home() {
   };
 
   const computeMetrics = (employee: Employee) => {
-    const records = data.punchRecords.filter(
+    const records = (activeOrg?.punchRecords ?? []).filter(
       (record) => record.userId === employee.id && record.endAt
     );
 
@@ -1194,16 +1455,18 @@ export default function Home() {
       daySet.add(start.toDateString());
 
       const shiftStartMinutes = timeToMinutes(
-        employee.shiftStart || data.settings.shiftStart
+        employee.shiftStart || activeOrg?.settings.shiftStart || DEFAULT_SETTINGS.shiftStart
       );
-      const lateAfter = shiftStartMinutes + data.settings.toleranceMinutes;
+      const lateAfter =
+        shiftStartMinutes +
+        (activeOrg?.settings.toleranceMinutes ?? DEFAULT_SETTINGS.toleranceMinutes);
       const startMinutes = getMinutesOfDay(start);
       if (startMinutes > lateAfter) {
         lateCount += 1;
       }
 
       const overtimeAfter = timeToMinutes(
-        data.settings.overtimeAfter || employee.shiftEnd
+        activeOrg?.settings.overtimeAfter || employee.shiftEnd || DEFAULT_SETTINGS.overtimeAfter
       );
       const endMinutes = getMinutesOfDay(end);
       if (endMinutes > overtimeAfter) {
@@ -1221,7 +1484,7 @@ export default function Home() {
 
   const reportRows = useMemo(
     () =>
-      data.employees
+      (activeOrg?.employees ?? [])
         .filter((employee) => employee.role !== "admin")
         .map((employee) => {
           const metrics = computeMetrics(employee);
@@ -1229,11 +1492,12 @@ export default function Home() {
             id: employee.id,
             name: employee.name,
             role: employee.role,
+            externalId: employee.externalId,
             ...metrics,
             points: pointsByUser.get(employee.id) ?? 0,
           };
         }),
-    [data.employees, data.punchRecords, data.settings, reportStart, pointsByUser]
+    [activeOrg, reportStart, pointsByUser]
   );
 
   const escapeCsv = (value: string | number) => {
@@ -1246,7 +1510,9 @@ export default function Home() {
 
   const reportCsv = useMemo(() => {
     const header = [
+      "empresa",
       "nome",
+      "id_externo",
       "funcao",
       "dias",
       "minutos",
@@ -1256,7 +1522,9 @@ export default function Home() {
     ];
     const rows = reportRows.map((row) =>
       [
+        escapeCsv(activeOrg?.name ?? "Empresa"),
         escapeCsv(row.name),
+        escapeCsv(row.externalId ?? ""),
         escapeCsv(row.role),
         row.daysWorked,
         Math.round(row.totalMinutes),
@@ -1266,14 +1534,14 @@ export default function Home() {
       ].join(";")
     );
     return [header.join(";"), ...rows].join("\n");
-  }, [reportRows]);
+  }, [reportRows, activeOrg]);
 
   const paymentsInRange = useMemo(() => {
-    return data.payments.filter((payment) => {
+    return (activeOrg?.payments ?? []).filter((payment) => {
       const day = new Date(`${payment.date}T00:00:00`);
       return day >= reportStart;
     });
-  }, [data.payments, reportStart]);
+  }, [activeOrg, reportStart]);
 
   const paymentsByUser = useMemo(() => {
     const totals = new Map<
@@ -1299,41 +1567,47 @@ export default function Home() {
 
   const paymentsCsv = useMemo(() => {
     const header = [
+      "empresa",
       "nome",
+      "id_externo",
       "data",
       "tipo",
       "status",
       "valor",
       "metodo",
       "nota",
+      "referencia",
     ];
     const rows = paymentsInRange.map((payment) => {
-      const employee = data.employees.find((item) => item.id === payment.userId);
+      const employee = activeOrg?.employees.find((item) => item.id === payment.userId);
       return [
+        escapeCsv(activeOrg?.name ?? "Empresa"),
         escapeCsv(employee?.name ?? "Funcionario"),
+        escapeCsv(employee?.externalId ?? ""),
         payment.date,
         payment.kind,
         payment.status,
         payment.amount,
         escapeCsv(payment.method),
         escapeCsv(payment.note ?? ""),
+        escapeCsv(payment.externalRef ?? ""),
       ].join(";");
     });
     return [header.join(";"), ...rows].join("\n");
-  }, [paymentsInRange, data.employees]);
+  }, [paymentsInRange, activeOrg]);
 
   const currentMetrics = useMemo(() => {
-    if (!currentUser) {
+    if (!currentEmployee) {
       return null;
     }
-    return reportRows.find((row) => row.id === currentUser.id) ?? null;
-  }, [currentUser, reportRows]);
+    return reportRows.find((row) => row.id === currentEmployee.id) ?? null;
+  }, [currentEmployee, reportRows]);
 
   const openShifts = useMemo(() => {
-    return data.punchRecords
+    return (activeOrg?.punchRecords ?? [])
       .filter((record) => !record.endAt)
       .map((record) => {
-        const employee = data.employees.find((item) => item.id === record.userId);
+        const employee = activeOrg?.employees.find((item) => item.id === record.userId);
         const startedAt = new Date(record.startAt);
         const durationMinutes = Math.max(
           0,
@@ -1347,13 +1621,13 @@ export default function Home() {
         };
       })
       .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
-  }, [data.punchRecords, data.employees, now]);
+  }, [activeOrg, now]);
 
   const pendingRequests = useMemo(
     () =>
-      data.timeOffRequests.filter((request) => request.status === "pending")
+      (activeOrg?.timeOffRequests ?? []).filter((request) => request.status === "pending")
         .length,
-    [data.timeOffRequests]
+    [activeOrg]
   );
 
   const handlePrevMonth = () => {
@@ -1373,7 +1647,7 @@ export default function Home() {
   };
 
   const handleToggleTimeOff = () => {
-    if (!currentUserId) {
+    if (!currentEmployeeId || !activeOrgId) {
       return;
     }
     if (getStartOfDay(selectedDate) < getStartOfDay(now)) {
@@ -1384,9 +1658,9 @@ export default function Home() {
       if (existing.status !== "pending") {
         return;
       }
-      setData((prev) => ({
-        ...prev,
-        timeOffRequests: prev.timeOffRequests.filter(
+      updateOrg(activeOrgId, (org) => ({
+        ...org,
+        timeOffRequests: org.timeOffRequests.filter(
           (request) => request.id !== existing.id
         ),
       }));
@@ -1395,15 +1669,15 @@ export default function Home() {
 
     const request: TimeOffRequest = {
       id: `req_${Date.now()}`,
-      userId: currentUserId,
+      userId: currentEmployeeId,
       date: selectedDateKey,
       status: "pending",
       createdAt: new Date().toISOString(),
     };
 
-    setData((prev) => ({
-      ...prev,
-      timeOffRequests: [...prev.timeOffRequests, request],
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      timeOffRequests: [...org.timeOffRequests, request],
     }));
   };
 
@@ -1411,23 +1685,29 @@ export default function Home() {
     id: string,
     status: TimeOffRequest["status"]
   ) => {
-    setData((prev) => ({
-      ...prev,
-      timeOffRequests: prev.timeOffRequests.map((request) =>
+    if (!activeOrgId) {
+      return;
+    }
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      timeOffRequests: org.timeOffRequests.map((request) =>
         request.id === id ? { ...request, status } : request
       ),
     }));
   };
 
   const handleRemoveTimeOff = (id: string) => {
-    setData((prev) => ({
-      ...prev,
-      timeOffRequests: prev.timeOffRequests.filter((request) => request.id !== id),
+    if (!activeOrgId) {
+      return;
+    }
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      timeOffRequests: org.timeOffRequests.filter((request) => request.id !== id),
     }));
   };
 
   const buildExportPayload = () => ({
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     data,
   });
@@ -1483,22 +1763,60 @@ export default function Home() {
     try {
       const parsed = JSON.parse(importData) as Partial<AppData> & {
         data?: Partial<AppData>;
+        employees?: Employee[];
+        settings?: Settings;
+        tasks?: Task[];
+        completions?: TaskCompletion[];
+        timeOffRequests?: TimeOffRequest[];
+        payments?: PaymentRecord[];
+        punchRecords?: PunchRecord[];
       };
-      const incoming = parsed.data ?? parsed;
-      if (!incoming.employees || !Array.isArray(incoming.employees)) {
+      const incoming = (parsed.data ?? parsed) as Partial<AppData> & {
+        employees?: Employee[];
+        settings?: Settings;
+        tasks?: Task[];
+        completions?: TaskCompletion[];
+        timeOffRequests?: TimeOffRequest[];
+        payments?: PaymentRecord[];
+        punchRecords?: PunchRecord[];
+      };
+
+      if (Array.isArray(incoming.organizations)) {
+        const organizations = incoming.organizations.map((org, index) =>
+          normalizeOrg(org, `org-${index + 1}`, `Empresa ${index + 1}`)
+        );
+        setData({
+          adminUsers: Array.isArray(incoming.adminUsers)
+            ? incoming.adminUsers
+            : DEFAULT_DATA.adminUsers,
+          organizations: organizations.length ? organizations : DEFAULT_DATA.organizations,
+          currentOrgId:
+            incoming.currentOrgId ??
+            organizations[0]?.id ??
+            DEFAULT_DATA.currentOrgId,
+        });
+      } else if (Array.isArray(incoming.employees)) {
+        const org = normalizeOrg(
+          {
+            employees: incoming.employees,
+            settings: incoming.settings,
+            tasks: incoming.tasks,
+            completions: incoming.completions,
+            timeOffRequests: incoming.timeOffRequests,
+            payments: incoming.payments,
+            punchRecords: incoming.punchRecords,
+          },
+          "org-principal",
+          "Empresa Principal"
+        );
+        setData({
+          adminUsers: DEFAULT_DATA.adminUsers,
+          organizations: [org],
+          currentOrgId: org.id,
+        });
+      } else {
         throw new Error("Formato invalido");
       }
-      setData({
-        employees: incoming.employees,
-        settings: { ...DEFAULT_SETTINGS, ...(incoming.settings ?? {}) },
-        tasks: Array.isArray(incoming.tasks) ? incoming.tasks : DEFAULT_DATA.tasks,
-        completions: Array.isArray(incoming.completions) ? incoming.completions : [],
-        timeOffRequests: Array.isArray(incoming.timeOffRequests)
-          ? incoming.timeOffRequests
-          : [],
-        payments: Array.isArray(incoming.payments) ? incoming.payments : [],
-        punchRecords: Array.isArray(incoming.punchRecords) ? incoming.punchRecords : [],
-      });
       setImportData("");
       setImportError("");
       setExportNotice("Importacao concluida.");
@@ -1508,7 +1826,7 @@ export default function Home() {
   };
 
   const handleAddPayment = () => {
-    if (!paymentForm.userId || !paymentForm.date || !paymentForm.amount) {
+    if (!paymentForm.userId || !paymentForm.date || !paymentForm.amount || !activeOrgId) {
       return;
     }
     const record: PaymentRecord = {
@@ -1520,24 +1838,29 @@ export default function Home() {
       status: paymentForm.status,
       kind: paymentForm.kind,
       note: paymentForm.note.trim() || undefined,
+      externalRef: paymentForm.externalRef.trim() || undefined,
       createdAt: new Date().toISOString(),
     };
-    setData((prev) => ({
-      ...prev,
-      payments: [record, ...prev.payments],
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      payments: [record, ...org.payments],
     }));
     setPaymentForm((prev) => ({
       ...prev,
       amount: 0,
       note: "",
+      externalRef: "",
       status: "planned",
     }));
   };
 
   const handleTogglePaymentStatus = (id: string) => {
-    setData((prev) => ({
-      ...prev,
-      payments: prev.payments.map((payment) =>
+    if (!activeOrgId) {
+      return;
+    }
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      payments: org.payments.map((payment) =>
         payment.id === id
           ? {
               ...payment,
@@ -1549,27 +1872,174 @@ export default function Home() {
   };
 
   const handleRemovePayment = (id: string) => {
-    setData((prev) => ({
-      ...prev,
-      payments: prev.payments.filter((payment) => payment.id !== id),
+    if (!activeOrgId) {
+      return;
+    }
+    updateOrg(activeOrgId, (org) => ({
+      ...org,
+      payments: org.payments.filter((payment) => payment.id !== id),
     }));
   };
 
-  if (!currentUser) {
+  const handleAdminLogin = () => {
+    if (!adminLogin.email.trim() || !adminLogin.password.trim()) {
+      setAdminLoginError("Informe email e senha.");
+      return;
+    }
+    const admin = data.adminUsers.find(
+      (item) =>
+        item.email.toLowerCase() === adminLogin.email.trim().toLowerCase() &&
+        item.password === adminLogin.password
+    );
+    if (!admin) {
+      setAdminLoginError("Credenciais invalidas.");
+      return;
+    }
+    setSession({ type: "admin", adminId: admin.id });
+    setAdminLogin({ email: admin.email, password: "" });
+    setAdminLoginError("");
+    setLoginError("");
+    setMenuOpen(false);
+    setData((prev) => ({
+      ...prev,
+      currentOrgId: prev.currentOrgId ?? prev.organizations[0]?.id ?? null,
+    }));
+  };
+
+  const handleSelectOrg = (orgId: string) => {
+    setData((prev) => ({
+      ...prev,
+      currentOrgId: orgId,
+    }));
+  };
+
+  const handleSaveOrg = () => {
+    if (!orgForm.name.trim()) {
+      return;
+    }
+    if (orgForm.mode === "new") {
+      const slug = createSlug(orgForm.name) || "empresa";
+      const id = generateId(slug);
+      const baseSettings = activeOrg?.settings ?? DEFAULT_SETTINGS;
+      const baseTasks = activeOrg?.tasks ?? DEFAULT_TASKS;
+      const newOrg: Organization = {
+        id,
+        name: orgForm.name.trim(),
+        slug,
+        employees: [],
+        settings: { ...baseSettings },
+        tasks: baseTasks.map((task) => ({ ...task })),
+        completions: [],
+        timeOffRequests: [],
+        payments: [],
+        punchRecords: [],
+      };
+      setData((prev) => ({
+        ...prev,
+        organizations: [...prev.organizations, newOrg],
+        currentOrgId: id,
+      }));
+    } else if (orgForm.mode === "edit" && orgForm.id) {
+      setData((prev) => ({
+        ...prev,
+        organizations: prev.organizations.map((org) =>
+          org.id === orgForm.id
+            ? {
+                ...org,
+                name: orgForm.name.trim(),
+                slug: createSlug(orgForm.name) || org.slug,
+              }
+            : org
+        ),
+      }));
+    }
+    setOrgForm({ id: "", name: "", mode: "new" });
+  };
+
+  const handleEditOrg = (org: Organization) => {
+    setOrgForm({ id: org.id, name: org.name, mode: "edit" });
+  };
+
+  const handleRemoveOrg = (orgId: string) => {
+    if (data.organizations.length <= 1) {
+      return;
+    }
+    setData((prev) => {
+      const filtered = prev.organizations.filter((org) => org.id !== orgId);
+      const nextOrgId =
+        prev.currentOrgId === orgId ? filtered[0]?.id ?? null : prev.currentOrgId;
+      return {
+        ...prev,
+        organizations: filtered,
+        currentOrgId: nextOrgId,
+      };
+    });
+  };
+
+  const handleSaveAdminProfile = () => {
+    if (!adminUser) {
+      return;
+    }
+    setData((prev) => ({
+      ...prev,
+      adminUsers: prev.adminUsers.map((admin) =>
+        admin.id === adminUser.id
+          ? {
+              ...admin,
+              name: adminProfileForm.name.trim() || admin.name,
+              email: adminProfileForm.email.trim() || admin.email,
+              password: adminProfileForm.password
+                ? adminProfileForm.password
+                : admin.password,
+            }
+          : admin
+      ),
+    }));
+    setAdminProfileForm((prev) => ({ ...prev, password: "" }));
+  };
+
+  if (!session) {
     return (
       <div className="login-shell">
         <div className="login-card">
           <span className="login-brand">Ponto Vivo</span>
-          <h1>Acesso por link</h1>
+          <h1>Acesso</h1>
           <p className="login-subtitle">
-            Este app funciona apenas com link de acesso enviado pelo admin.
+            Funcionarios entram por link. Admin entra com email e senha.
           </p>
           {loginError ? <p className="login-error">{loginError}</p> : null}
           <div className="login-hint">
             <span>
-              Exemplo: {origin ? `${origin}/?autologin=token` : "/?autologin=token"}
+              Link de colaborador:{" "}
+              {origin ? `${origin}/?autologin=token` : "/?autologin=token"}
             </span>
-            <span>Se precisar, solicite o link ao admin.</span>
+            <span>Solicite o link ao admin.</span>
+          </div>
+          <div className="login-divider" />
+          <div className="login-form">
+            <label>Email admin</label>
+            <input
+              type="email"
+              value={adminLogin.email}
+              onChange={(event) =>
+                setAdminLogin((prev) => ({ ...prev, email: event.target.value }))
+              }
+            />
+            <label>Senha</label>
+            <input
+              type="password"
+              value={adminLogin.password}
+              onChange={(event) =>
+                setAdminLogin((prev) => ({ ...prev, password: event.target.value }))
+              }
+            />
+            <button className="login-button action-btn" type="button" onClick={handleAdminLogin}>
+              Entrar como admin
+            </button>
+            {adminLoginError ? <p className="login-error">{adminLoginError}</p> : null}
+            <div className="login-hint">
+              <span>Primeiro acesso: admin@empresa.com / admin123</span>
+            </div>
           </div>
         </div>
       </div>
@@ -1582,8 +2052,8 @@ export default function Home() {
     denied: "Negada",
   };
 
-  const currentPoints = currentUser
-    ? pointsByUser.get(currentUser.id) ?? 0
+  const currentPoints = currentEmployee
+    ? pointsByUser.get(currentEmployee.id) ?? 0
     : 0;
 
   const pointsToday = Array.from(completedToday).reduce((total, taskId) => {
@@ -1594,8 +2064,8 @@ export default function Home() {
   const selectedDayType = getDayType(
     selectedDate.getDay(),
     personalProfile,
-    data.employees,
-    data.settings
+    activeOrg?.employees ?? [],
+    activeOrg?.settings ?? DEFAULT_SETTINGS
   );
 
   const isPastDate = getStartOfDay(selectedDate) < getStartOfDay(now);
@@ -1624,7 +2094,7 @@ export default function Home() {
         <div className="menu-header">
           <div>
             <div className="menu-title">Menu</div>
-            <div className="menu-subtitle">Bem vindo, {currentUser.name}</div>
+            <div className="menu-subtitle">Bem vindo, {displayName}</div>
           </div>
           <button
             className="menu-close"
@@ -1724,7 +2194,11 @@ export default function Home() {
                 <strong>
                   {personalProfile
                     ? `${personalProfile.shiftStart}-${personalProfile.shiftEnd}`
-                    : `${data.settings.shiftStart}-${data.settings.shiftEnd}`}
+                    : `${
+                        activeOrg?.settings.shiftStart ?? DEFAULT_SETTINGS.shiftStart
+                      }-${
+                        activeOrg?.settings.shiftEnd ?? DEFAULT_SETTINGS.shiftEnd
+                      }`}
                 </strong>
               </div>
               {personalProfile ? (
@@ -1961,7 +2435,10 @@ export default function Home() {
               <div className="stat">
                 <span className="stat-label">Atrasos</span>
                 <span className="stat-value">{currentMetrics?.lateCount ?? 0}</span>
-                <span className="stat-note">Tolerancia {data.settings.toleranceMinutes}m</span>
+                <span className="stat-note">
+                  Tolerancia{" "}
+                  {activeOrg?.settings.toleranceMinutes ?? DEFAULT_SETTINGS.toleranceMinutes}m
+                </span>
               </div>
               <div className="stat">
                 <span className="stat-label">Hora extra</span>
@@ -1970,7 +2447,9 @@ export default function Home() {
                     ? formatMinutes(currentMetrics.overtimeMinutes)
                     : "0h 0m"}
                 </span>
-                <span className="stat-note">Apos {data.settings.overtimeAfter}</span>
+                <span className="stat-note">
+                  Apos {activeOrg?.settings.overtimeAfter ?? DEFAULT_SETTINGS.overtimeAfter}
+                </span>
               </div>
               <div className="stat">
                 <span className="stat-label">Pontos</span>
@@ -1982,7 +2461,8 @@ export default function Home() {
                   <span className="stat-label">Solicitacoes pendentes</span>
                   <span className="stat-value">{pendingRequests}</span>
                   <span className="stat-note">
-                    Equipe ativa {data.employees.filter(
+                    Equipe ativa{" "}
+                    {(activeOrg?.employees ?? []).filter(
                       (employee) => employee.role !== "admin"
                     ).length}
                   </span>
@@ -1994,32 +2474,33 @@ export default function Home() {
           <section className="tool-card account-card">
             <div className="account-header">
               <div>
-                <div className="account-name">{currentUser.name}</div>
+                <div className="account-name">
+                  {isAdmin ? adminUser?.name ?? "Admin" : currentEmployee?.name ?? "Usuario"}
+                </div>
                 <div className="account-email">
-                  {currentUser.email || "Sem email"}
+                  {isAdmin
+                    ? adminUser?.email ?? "Sem email"
+                    : currentEmployee?.email || "Sem email"}
                 </div>
               </div>
-              <span className={`role-pill ${currentUser.role}`}>
-                {currentUser.role}
+              <span className={`role-pill ${isAdmin ? "admin" : currentEmployee?.role}`}>
+                {isAdmin ? "admin" : currentEmployee?.role}
               </span>
             </div>
-            <p className="entry-note">
-              Escala: {formatWorkDays(currentUser.workDays)} | Turno {currentUser.shiftStart}-
-              {currentUser.shiftEnd}
-            </p>
+            {isAdmin ? (
+              <p className="entry-note">
+                Empresa selecionada: {activeOrg?.name ?? "Nenhuma"}
+              </p>
+            ) : (
+              <p className="entry-note">
+                Escala: {formatWorkDays(currentEmployee?.workDays ?? [])} | Turno{" "}
+                {currentEmployee?.shiftStart}-{currentEmployee?.shiftEnd}
+              </p>
+            )}
             <div className="action-grid">
               <button className="action-btn" type="button" onClick={handleLogout}>
                 Sair
               </button>
-              {isAdmin ? (
-                <button
-                  className="action-btn"
-                  type="button"
-                  onClick={() => handleCopyLink(currentUser.token)}
-                >
-                  {copiedToken === currentUser.token ? "Copiado" : "Copiar link"}
-                </button>
-              ) : null}
             </div>
           </section>
 
@@ -2050,14 +2531,18 @@ export default function Home() {
                         <strong>{employee.name}</strong>
                         <span className="admin-link-text">
                           {origin
-                            ? `${origin}/?autologin=${employee.token}`
-                            : `/?autologin=${employee.token}`}
+                            ? `${origin}/?autologin=${employee.token}${
+                                activeOrgId ? `&org=${activeOrgId}` : ""
+                              }`
+                            : `/?autologin=${employee.token}${
+                                activeOrgId ? `&org=${activeOrgId}` : ""
+                              }`}
                         </span>
                       </div>
                       <button
                         className="ghost ghost--small"
                         type="button"
-                        onClick={() => handleCopyLink(employee.token)}
+                        onClick={() => handleCopyLink(employee.token, activeOrgId ?? undefined)}
                       >
                         {copiedToken === employee.token ? "Copiado" : "Copiar"}
                       </button>
@@ -2072,39 +2557,97 @@ export default function Home() {
                       <strong>{testAccount.name} (teste)</strong>
                       <span className="admin-link-text">
                         {origin
-                          ? `${origin}/?autologin=${testAccount.token}`
-                          : `/?autologin=${testAccount.token}`}
+                          ? `${origin}/?autologin=${testAccount.token}${
+                              activeOrgId ? `&org=${activeOrgId}` : ""
+                            }`
+                          : `/?autologin=${testAccount.token}${
+                              activeOrgId ? `&org=${activeOrgId}` : ""
+                            }`}
                       </span>
                     </div>
                     <button
                       className="ghost ghost--small"
                       type="button"
-                      onClick={() => handleCopyLink(testAccount.token)}
+                      onClick={() => handleCopyLink(testAccount.token, activeOrgId ?? undefined)}
                     >
                       {copiedToken === testAccount.token ? "Copiado" : "Copiar"}
                     </button>
                   </div>
                 ) : null}
-                <div className="admin-links-title">Admin</div>
-                {adminAccounts.map((employee) => (
-                  <div key={employee.id} className="admin-link-row">
+              </div>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Empresas</h3>
+                <span className="admin-pill">Multi</span>
+              </div>
+              <p>Gerencie varias empresas com o mesmo admin.</p>
+              <div className="org-list">
+                {data.organizations.map((org) => (
+                  <div
+                    key={org.id}
+                    className={`org-item ${org.id === activeOrgId ? "is-active" : ""}`}
+                  >
                     <div>
-                      <strong>{employee.name}</strong>
-                      <span className="admin-link-text">
-                        {origin
-                          ? `${origin}/?autologin=${employee.token}`
-                          : `/?autologin=${employee.token}`}
+                      <strong>{org.name}</strong>
+                      <span className="entry-note">
+                        Pessoas: {org.employees.length} | ID: {org.slug}
                       </span>
                     </div>
-                    <button
-                      className="ghost ghost--small"
-                      type="button"
-                      onClick={() => handleCopyLink(employee.token)}
-                    >
-                      {copiedToken === employee.token ? "Copiado" : "Copiar"}
-                    </button>
+                    <div className="org-actions">
+                      <button
+                        className="ghost ghost--small"
+                        type="button"
+                        onClick={() => handleSelectOrg(org.id)}
+                      >
+                        {org.id === activeOrgId ? "Ativa" : "Selecionar"}
+                      </button>
+                      <button
+                        className="ghost ghost--small"
+                        type="button"
+                        onClick={() => handleEditOrg(org)}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="ghost ghost--small"
+                        type="button"
+                        onClick={() => handleRemoveOrg(org.id)}
+                        disabled={data.organizations.length <= 1}
+                      >
+                        Remover
+                      </button>
+                    </div>
                   </div>
                 ))}
+              </div>
+              <div className="org-form">
+                <h4>{orgForm.mode === "new" ? "Nova empresa" : "Editar empresa"}</h4>
+                <div className="form-grid">
+                  <div>
+                    <label>Nome da empresa</label>
+                    <input
+                      type="text"
+                      value={orgForm.name}
+                      onChange={(event) =>
+                        setOrgForm((prev) => ({ ...prev, name: event.target.value }))
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="action-grid">
+                  <button className="action-btn" type="button" onClick={handleSaveOrg}>
+                    {orgForm.mode === "new" ? "Adicionar empresa" : "Salvar empresa"}
+                  </button>
+                  <button
+                    className="ghost ghost--small"
+                    type="button"
+                    onClick={() => setOrgForm({ id: "", name: "", mode: "new" })}
+                  >
+                    Cancelar
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -2159,14 +2702,14 @@ export default function Home() {
                   <div className="inline-row">
                     <input
                       type="time"
-                      value={data.settings.shiftStart}
+                      value={activeOrg?.settings.shiftStart ?? DEFAULT_SETTINGS.shiftStart}
                       onChange={(event) =>
                         handleSettingsChange({ shiftStart: event.target.value })
                       }
                     />
                     <input
                       type="time"
-                      value={data.settings.shiftEnd}
+                      value={activeOrg?.settings.shiftEnd ?? DEFAULT_SETTINGS.shiftEnd}
                       onChange={(event) =>
                         handleSettingsChange({ shiftEnd: event.target.value })
                       }
@@ -2179,7 +2722,10 @@ export default function Home() {
                     <input
                       type="number"
                       min={0}
-                      value={data.settings.toleranceMinutes}
+                      value={
+                        activeOrg?.settings.toleranceMinutes ??
+                        DEFAULT_SETTINGS.toleranceMinutes
+                      }
                       onChange={(event) =>
                         handleSettingsChange({
                           toleranceMinutes: Number(event.target.value),
@@ -2191,7 +2737,7 @@ export default function Home() {
                     <label>Hora extra apos</label>
                     <input
                       type="time"
-                      value={data.settings.overtimeAfter}
+                      value={activeOrg?.settings.overtimeAfter ?? DEFAULT_SETTINGS.overtimeAfter}
                       onChange={(event) =>
                         handleSettingsChange({ overtimeAfter: event.target.value })
                       }
@@ -2202,7 +2748,7 @@ export default function Home() {
                   <label>Geofence (nome do local)</label>
                   <input
                     type="text"
-                    value={data.settings.geofenceName}
+                    value={activeOrg?.settings.geofenceName ?? DEFAULT_SETTINGS.geofenceName}
                     onChange={(event) =>
                       handleSettingsChange({ geofenceName: event.target.value })
                     }
@@ -2213,7 +2759,10 @@ export default function Home() {
                     <label>Plus code</label>
                     <input
                       type="text"
-                      value={data.settings.geofencePlusCode}
+                      value={
+                        activeOrg?.settings.geofencePlusCode ??
+                        DEFAULT_SETTINGS.geofencePlusCode
+                      }
                       onChange={(event) =>
                         handleSettingsChange({
                           geofencePlusCode: event.target.value,
@@ -2226,7 +2775,10 @@ export default function Home() {
                     <input
                       type="number"
                       min={10}
-                      value={data.settings.geofenceRadius}
+                      value={
+                        activeOrg?.settings.geofenceRadius ??
+                        DEFAULT_SETTINGS.geofenceRadius
+                      }
                       onChange={(event) =>
                         handleSettingsChange({
                           geofenceRadius: Number(event.target.value),
@@ -2241,7 +2793,7 @@ export default function Home() {
                     <input
                       type="number"
                       step="0.000001"
-                      value={data.settings.geofenceLat}
+                      value={activeOrg?.settings.geofenceLat ?? DEFAULT_SETTINGS.geofenceLat}
                       onChange={(event) =>
                         handleSettingsChange({
                           geofenceLat: Number(event.target.value),
@@ -2254,7 +2806,7 @@ export default function Home() {
                     <input
                       type="number"
                       step="0.000001"
-                      value={data.settings.geofenceLng}
+                      value={activeOrg?.settings.geofenceLng ?? DEFAULT_SETTINGS.geofenceLng}
                       onChange={(event) =>
                         handleSettingsChange({
                           geofenceLng: Number(event.target.value),
@@ -2267,7 +2819,7 @@ export default function Home() {
                   <label>Limpeza semanal</label>
                   <div className="inline-row">
                     <select
-                      value={data.settings.cleaningDay}
+                      value={activeOrg?.settings.cleaningDay ?? DEFAULT_SETTINGS.cleaningDay}
                       onChange={(event) =>
                         handleSettingsChange({
                           cleaningDay: Number(event.target.value),
@@ -2282,7 +2834,9 @@ export default function Home() {
                     </select>
                     <input
                       type="time"
-                      value={data.settings.cleaningStart}
+                      value={
+                        activeOrg?.settings.cleaningStart ?? DEFAULT_SETTINGS.cleaningStart
+                      }
                       onChange={(event) =>
                         handleSettingsChange({
                           cleaningStart: event.target.value,
@@ -2291,7 +2845,7 @@ export default function Home() {
                     />
                     <input
                       type="time"
-                      value={data.settings.cleaningEnd}
+                      value={activeOrg?.settings.cleaningEnd ?? DEFAULT_SETTINGS.cleaningEnd}
                       onChange={(event) =>
                         handleSettingsChange({ cleaningEnd: event.target.value })
                       }
@@ -2302,7 +2856,7 @@ export default function Home() {
                   <label>Nota da limpeza</label>
                   <input
                     type="text"
-                    value={data.settings.cleaningNote}
+                    value={activeOrg?.settings.cleaningNote ?? DEFAULT_SETTINGS.cleaningNote}
                     onChange={(event) =>
                       handleSettingsChange({ cleaningNote: event.target.value })
                     }
@@ -2311,13 +2865,13 @@ export default function Home() {
                 <div>
                   <label>Participantes da limpeza</label>
                   <div className="toggle-list">
-                    {data.employees
+                    {(activeOrg?.employees ?? [])
                       .filter((employee) => employee.role !== "admin")
                       .map((employee) => (
                         <label key={employee.id} className="toggle-row">
                           <input
                             type="checkbox"
-                            checked={data.settings.cleaningParticipants.includes(
+                            checked={(activeOrg?.settings.cleaningParticipants ?? []).includes(
                               employee.id
                             )}
                             onChange={() =>
@@ -2334,12 +2888,67 @@ export default function Home() {
 
             <section className="tool-card admin-card">
               <div className="admin-header">
+                <h3>Conta admin</h3>
+                <span className="admin-pill">Perfil</span>
+              </div>
+              <p>Atualize email e senha do admin.</p>
+              <div className="form-grid">
+                <div>
+                  <label>Nome</label>
+                  <input
+                    type="text"
+                    value={adminProfileForm.name}
+                    onChange={(event) =>
+                      setAdminProfileForm((prev) => ({
+                        ...prev,
+                        name: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label>Email</label>
+                  <input
+                    type="email"
+                    value={adminProfileForm.email}
+                    onChange={(event) =>
+                      setAdminProfileForm((prev) => ({
+                        ...prev,
+                        email: event.target.value,
+                      }))
+                    }
+                  />
+                </div>
+                <div>
+                  <label>Nova senha</label>
+                  <input
+                    type="password"
+                    value={adminProfileForm.password}
+                    onChange={(event) =>
+                      setAdminProfileForm((prev) => ({
+                        ...prev,
+                        password: event.target.value,
+                      }))
+                    }
+                  />
+                  <span className="entry-note">
+                    Deixe vazio para manter a senha atual.
+                  </span>
+                </div>
+              </div>
+              <button className="action-btn" type="button" onClick={handleSaveAdminProfile}>
+                Salvar perfil admin
+              </button>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
                 <h3>Cadastro de funcionarios</h3>
                 <span className="admin-pill">Equipe</span>
               </div>
               <p>Crie contas, personalize escalas e permissoes.</p>
               <div className="employee-list">
-                {data.employees.map((employee) => (
+                {(activeOrg?.employees ?? []).map((employee) => (
                   <div key={employee.id} className="employee-card">
                     <div className="employee-head">
                       <div>
@@ -2350,6 +2959,11 @@ export default function Home() {
                         <span className="employee-meta">
                           Dias: {formatWorkDays(employee.workDays)}
                         </span>
+                        {employee.externalId ? (
+                          <span className="employee-meta">
+                            ID externo: {employee.externalId}
+                          </span>
+                        ) : null}
                       </div>
                       <div className="employee-tags">
                         {employee.isTest ? (
@@ -2375,7 +2989,7 @@ export default function Home() {
                       <button
                         className="ghost ghost--small"
                         type="button"
-                        onClick={() => handleCopyLink(employee.token)}
+                        onClick={() => handleCopyLink(employee.token, activeOrgId ?? undefined)}
                       >
                         {copiedToken === employee.token ? "Copiado" : "Copiar link"}
                       </button>
@@ -2383,7 +2997,7 @@ export default function Home() {
                         className="ghost ghost--small"
                         type="button"
                         onClick={() => handleRemoveEmployee(employee.id)}
-                        disabled={employee.id === currentUserId}
+                        disabled={employee.id === currentEmployeeId}
                       >
                         Remover
                       </button>
@@ -2497,6 +3111,19 @@ export default function Home() {
                       }
                     />
                   </div>
+                  <div>
+                    <label>ID externo</label>
+                    <input
+                      type="text"
+                      value={employeeForm.externalId}
+                      onChange={(event) =>
+                        setEmployeeForm((prev) => ({
+                          ...prev,
+                          externalId: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
                   <div className="inline-row">
                     <div>
                       <label>Tipo pagamento</label>
@@ -2595,7 +3222,7 @@ export default function Home() {
               <div className="timeoff-list">
                 {adminRequests.length ? (
                   adminRequests.map((request) => {
-                    const employee = data.employees.find(
+                    const employee = activeOrg?.employees.find(
                       (item) => item.id === request.userId
                     );
                     return (
@@ -2648,8 +3275,8 @@ export default function Home() {
               </div>
               <p>Gerencie tarefas e pontos.</p>
               <div className="task-list">
-                {data.tasks.length ? (
-                  data.tasks.map((task) => (
+                {(activeOrg?.tasks ?? []).length ? (
+                  (activeOrg?.tasks ?? []).map((task) => (
                     <div key={task.id} className="task-item">
                       <div className="task-meta">
                         <strong>{task.title}</strong>
@@ -2852,8 +3479,8 @@ export default function Home() {
               </div>
               <p>Valores visiveis apenas para o admin.</p>
               <div className="admin-payroll">
-                {data.employees.filter((employee) => employee.pay).length ? (
-                  data.employees
+                {(activeOrg?.employees ?? []).filter((employee) => employee.pay).length ? (
+                  (activeOrg?.employees ?? [])
                     .filter((employee) => employee.pay)
                     .map((employee) => (
                       <div key={employee.id} className="payroll-item">
@@ -2884,7 +3511,7 @@ export default function Home() {
               </div>
               <p>Registre pagamentos, bonus e ajustes.</p>
               <div className="payment-summary">
-                {data.employees
+                {(activeOrg?.employees ?? [])
                   .filter((employee) => employee.role !== "admin")
                   .map((employee) => {
                     const totals = paymentsByUser.get(employee.id) ?? {
@@ -2922,7 +3549,7 @@ export default function Home() {
                       }
                     >
                       <option value="">Selecionar</option>
-                      {data.employees
+                      {(activeOrg?.employees ?? [])
                         .filter((employee) => employee.role !== "admin")
                         .map((employee) => (
                           <option key={employee.id} value={employee.id}>
@@ -3021,6 +3648,19 @@ export default function Home() {
                       />
                     </div>
                   </div>
+                  <div>
+                    <label>Referencia externa</label>
+                    <input
+                      type="text"
+                      value={paymentForm.externalRef}
+                      onChange={(event) =>
+                        setPaymentForm((prev) => ({
+                          ...prev,
+                          externalRef: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
                 </div>
                 <button className="action-btn" type="button" onClick={handleAddPayment}>
                   Registrar pagamento
@@ -3028,9 +3668,9 @@ export default function Home() {
               </div>
 
               <div className="payment-list">
-                {data.payments.length ? (
-                  data.payments.slice(0, 12).map((payment) => {
-                    const employee = data.employees.find(
+                {(activeOrg?.payments ?? []).length ? (
+                  (activeOrg?.payments ?? []).slice(0, 12).map((payment) => {
+                    const employee = activeOrg?.employees.find(
                       (item) => item.id === payment.userId
                     );
                     return (
@@ -3042,6 +3682,11 @@ export default function Home() {
                           </span>
                           {payment.note ? (
                             <span className="payment-meta">{payment.note}</span>
+                          ) : null}
+                          {payment.externalRef ? (
+                            <span className="payment-meta">
+                              Ref: {payment.externalRef}
+                            </span>
                           ) : null}
                         </div>
                         <div className="payment-actions">
