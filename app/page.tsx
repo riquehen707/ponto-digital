@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -12,20 +12,7 @@ type GeoInfo = {
   inside?: boolean;
 };
 
-type Role = "admin" | "staff";
-
-type Account = {
-  id: string;
-  name: string;
-  email: string;
-  role: Role;
-};
-
-type DemoAccount = Account & {
-  token: string;
-};
-
-type StaffRole = "staff" | "manager" | "support";
+type Role = "admin" | "staff" | "manager" | "support";
 
 type PayInfo = {
   type: "daily" | "monthly";
@@ -33,14 +20,25 @@ type PayInfo = {
   note?: string;
 };
 
-type StaffProfile = {
+type Employee = {
   id: string;
   name: string;
-  scheduleName: string;
-  role: StaffRole;
-  shift: string;
+  email: string;
+  role: Role;
+  token: string;
+  canPunch: boolean;
+  shiftStart: string;
+  shiftEnd: string;
   workDays: number[];
   pay?: PayInfo;
+  isTest?: boolean;
+};
+
+type Task = {
+  id: string;
+  title: string;
+  points: number;
+  active: boolean;
 };
 
 type ScheduleEntry = {
@@ -51,24 +49,92 @@ type ScheduleEntry = {
   tone: "work" | "manager" | "cleaning";
 };
 
-type ShiftNoticeTone = "default" | "success" | "error";
-
-const GEOFENCE = {
-  name: "VH89+92 Teresopolis, Alagoinhas - BA",
-  plusCode: "VH89+92",
-  fullCode: "59V3VH89+92",
-  lat: -12.1340625,
-  lng: -38.4324375,
-  radiusMeters: 120,
+type TaskCompletion = {
+  id: string;
+  taskId: string;
+  userId: string;
+  date: string;
 };
 
-const DEMO_ACCOUNTS: DemoAccount[] = [
+type TimeOffRequest = {
+  id: string;
+  userId: string;
+  date: string;
+  status: "pending" | "approved" | "denied";
+  note?: string;
+  createdAt: string;
+};
+
+type PunchRecord = {
+  id: string;
+  userId: string;
+  startAt: string;
+  endAt?: string;
+  closedBy?: "manual" | "geofence";
+};
+
+type Settings = {
+  shiftStart: string;
+  shiftEnd: string;
+  toleranceMinutes: number;
+  overtimeAfter: string;
+  geofenceName: string;
+  geofencePlusCode: string;
+  geofenceLat: number;
+  geofenceLng: number;
+  geofenceRadius: number;
+  cleaningDay: number;
+  cleaningStart: string;
+  cleaningEnd: string;
+  cleaningNote: string;
+  cleaningParticipants: string[];
+};
+
+type AppData = {
+  employees: Employee[];
+  settings: Settings;
+  tasks: Task[];
+  completions: TaskCompletion[];
+  timeOffRequests: TimeOffRequest[];
+  punchRecords: PunchRecord[];
+};
+
+type ShiftNoticeTone = "default" | "success" | "error";
+
+type ReportRange = "week" | "month" | "30d";
+
+const STORAGE_KEY = "ponto-vivo-data-v1";
+
+const WEEK_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
+
+const DEFAULT_SETTINGS: Settings = {
+  shiftStart: "16:00",
+  shiftEnd: "22:00",
+  toleranceMinutes: 5,
+  overtimeAfter: "22:00",
+  geofenceName: "VH89+92 Teresopolis, Alagoinhas - BA",
+  geofencePlusCode: "VH89+92",
+  geofenceLat: -12.1340625,
+  geofenceLng: -38.4324375,
+  geofenceRadius: 120,
+  cleaningDay: 6,
+  cleaningStart: "09:00",
+  cleaningEnd: "12:00",
+  cleaningNote: "2-3h (1x/semana, a combinar)",
+  cleaningParticipants: ["ayra", "nathyeli"],
+};
+
+const DEFAULT_EMPLOYEES: Employee[] = [
   {
     id: "admin",
     name: "Henrique Admin",
     email: "admin@empresa.com",
     role: "admin",
     token: "admin-hq",
+    canPunch: false,
+    shiftStart: "08:00",
+    shiftEnd: "18:00",
+    workDays: [1, 2, 3, 4, 5],
   },
   {
     id: "ayra",
@@ -76,47 +142,9 @@ const DEMO_ACCOUNTS: DemoAccount[] = [
     email: "ayra@empresa.com",
     role: "staff",
     token: "ayra-2026",
-  },
-  {
-    id: "nathyeli",
-    name: "Nathyeli",
-    email: "nathyeli@empresa.com",
-    role: "staff",
-    token: "nathyeli-2026",
-  },
-  {
-    id: "henrique-teste",
-    name: "Henrique Teste",
-    email: "teste@empresa.com",
-    role: "staff",
-    token: "henrique-teste",
-  },
-];
-
-const TEAM_ACCOUNTS = DEMO_ACCOUNTS.filter(
-  (account) => account.role === "staff" && account.id !== "henrique-teste"
-);
-
-const TEST_ACCOUNT = DEMO_ACCOUNTS.find(
-  (account) => account.id === "henrique-teste"
-);
-
-const ADMIN_ACCOUNTS = DEMO_ACCOUNTS.filter(
-  (account) => account.role === "admin"
-);
-
-const WEEK_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
-
-const SHIFT_TIME = "16:00-22:00";
-const CLEANING_DAY = 6;
-
-const STAFF_PROFILES: StaffProfile[] = [
-  {
-    id: "ayra",
-    name: "Ayra",
-    scheduleName: "Ayra",
-    role: "staff",
-    shift: SHIFT_TIME,
+    canPunch: true,
+    shiftStart: "16:00",
+    shiftEnd: "22:00",
     workDays: [3, 4, 5, 6, 0],
     pay: {
       type: "daily",
@@ -127,9 +155,12 @@ const STAFF_PROFILES: StaffProfile[] = [
   {
     id: "nathyeli",
     name: "Nathyeli",
-    scheduleName: "Nathyeli",
+    email: "nathyeli@empresa.com",
     role: "staff",
-    shift: SHIFT_TIME,
+    token: "nathyeli-2026",
+    canPunch: true,
+    shiftStart: "16:00",
+    shiftEnd: "22:00",
     workDays: [5, 6, 0, 1, 2],
     pay: {
       type: "daily",
@@ -140,9 +171,12 @@ const STAFF_PROFILES: StaffProfile[] = [
   {
     id: "mariza",
     name: "Mariza Santos",
-    scheduleName: "Mariza (gerente)",
+    email: "mariza@empresa.com",
     role: "manager",
-    shift: "Gerente (sem ponto)",
+    token: "mariza-gerente",
+    canPunch: false,
+    shiftStart: "08:00",
+    shiftEnd: "18:00",
     workDays: [4, 5, 6, 0, 1],
     pay: {
       type: "monthly",
@@ -153,9 +187,12 @@ const STAFF_PROFILES: StaffProfile[] = [
   {
     id: "bezinha",
     name: "Bezinha",
-    scheduleName: "Bezinha (cobertura)",
+    email: "bezinha@empresa.com",
     role: "support",
-    shift: SHIFT_TIME,
+    token: "bezinha-2026",
+    canPunch: false,
+    shiftStart: "16:00",
+    shiftEnd: "22:00",
     workDays: [2, 3],
     pay: {
       type: "daily",
@@ -163,7 +200,34 @@ const STAFF_PROFILES: StaffProfile[] = [
       note: "Cobre ter/qua quando Mariza folga",
     },
   },
+  {
+    id: "henrique-teste",
+    name: "Henrique Teste",
+    email: "teste@empresa.com",
+    role: "staff",
+    token: "henrique-teste",
+    canPunch: true,
+    shiftStart: "16:00",
+    shiftEnd: "22:00",
+    workDays: [1, 2, 3, 4, 5],
+    isTest: true,
+  },
 ];
+
+const DEFAULT_TASKS: Task[] = [
+  { id: "task-1", title: "Limpeza rapida do setor", points: 10, active: true },
+  { id: "task-2", title: "Reposicao de estoque", points: 8, active: true },
+  { id: "task-3", title: "Atendimento premium", points: 12, active: true },
+];
+
+const DEFAULT_DATA: AppData = {
+  employees: DEFAULT_EMPLOYEES,
+  settings: DEFAULT_SETTINGS,
+  tasks: DEFAULT_TASKS,
+  completions: [],
+  timeOffRequests: [],
+  punchRecords: [],
+};
 
 const formatCurrency = (value: number) =>
   value.toLocaleString("pt-BR", {
@@ -172,54 +236,15 @@ const formatCurrency = (value: number) =>
     minimumFractionDigits: 2,
   });
 
-const getEntriesForDay = (weekday: number): ScheduleEntry[] => {
-  const entries: ScheduleEntry[] = [];
-
-  if (weekday === CLEANING_DAY) {
-    entries.push({
-      title: "Limpeza geral",
-      time: "09:00-12:00",
-      people: ["Ayra", "Nathyeli"],
-      note: "2-3h (1x/semana, a combinar)",
-      tone: "cleaning",
-    });
+const timeToMinutes = (value: string) => {
+  const [hours, minutes] = value.split(":").map((part) => Number(part));
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) {
+    return 0;
   }
-
-  const shiftWorkers = STAFF_PROFILES.filter(
-    (profile) => profile.role !== "manager" && profile.workDays.includes(weekday)
-  );
-
-  if (shiftWorkers.length) {
-    entries.push({
-      title: `Turno ${SHIFT_TIME}`,
-      time: SHIFT_TIME,
-      people: shiftWorkers.map((profile) => profile.scheduleName),
-      tone: "work",
-    });
-  }
-
-  const manager = STAFF_PROFILES.find(
-    (profile) => profile.role === "manager" && profile.workDays.includes(weekday)
-  );
-
-  if (manager) {
-    entries.push({
-      title: "Gerencia (sem ponto)",
-      time: "Escala gerente",
-      people: [manager.scheduleName],
-      tone: "manager",
-    });
-  }
-
-  return entries;
+  return hours * 60 + minutes;
 };
 
-const getDayType = (weekday: number, profile: StaffProfile | null) => {
-  if (profile) {
-    return profile.workDays.includes(weekday) ? "work" : "off";
-  }
-  return getEntriesForDay(weekday).length ? "work" : "off";
-};
+const getMinutesOfDay = (date: Date) => date.getHours() * 60 + date.getMinutes();
 
 const isSameDay = (a: Date, b: Date) =>
   a.getFullYear() === b.getFullYear() &&
@@ -247,35 +272,185 @@ const getDistanceMeters = (
   return earthRadius * c;
 };
 
+const getRangeStart = (range: ReportRange) => {
+  const now = new Date();
+  const start = new Date(now);
+  if (range === "week") {
+    const day = (now.getDay() + 6) % 7;
+    start.setDate(now.getDate() - day);
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }
+  if (range === "30d") {
+    start.setDate(now.getDate() - 29);
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }
+  start.setDate(1);
+  start.setHours(0, 0, 0, 0);
+  return start;
+};
+
+const formatWorkDays = (days: number[]) => {
+  if (!days.length) {
+    return "Sem escala";
+  }
+  return days
+    .slice()
+    .sort()
+    .map((day) => WEEK_LABELS[(day + 6) % 7])
+    .join(", ");
+};
+
+const buildScheduleEntries = (
+  weekday: number,
+  employees: Employee[],
+  settings: Settings
+): ScheduleEntry[] => {
+  const entries: ScheduleEntry[] = [];
+
+  if (settings.cleaningDay === weekday) {
+    const cleaningPeople = employees
+      .filter((employee) => settings.cleaningParticipants.includes(employee.id))
+      .map((employee) => employee.name);
+
+    entries.push({
+      title: "Limpeza geral",
+      time: `${settings.cleaningStart}-${settings.cleaningEnd}`,
+      people: cleaningPeople,
+      note: settings.cleaningNote,
+      tone: "cleaning",
+    });
+  }
+
+  const shiftWorkers = employees.filter(
+    (employee) =>
+      employee.role !== "admin" &&
+      employee.role !== "manager" &&
+      employee.workDays.includes(weekday)
+  );
+
+  if (shiftWorkers.length) {
+    entries.push({
+      title: "Turno da equipe",
+      time: `${settings.shiftStart}-${settings.shiftEnd}`,
+      people: shiftWorkers.map((employee) => employee.name),
+      tone: "work",
+    });
+  }
+
+  const manager = employees.find(
+    (employee) =>
+      employee.role === "manager" && employee.workDays.includes(weekday)
+  );
+
+  if (manager) {
+    entries.push({
+      title: "Gerencia (sem ponto)",
+      time: "Escala gerente",
+      people: [manager.name],
+      tone: "manager",
+    });
+  }
+
+  return entries;
+};
+
+const getDayType = (
+  weekday: number,
+  profile: Employee | null,
+  employees: Employee[],
+  settings: Settings
+) => {
+  if (profile) {
+    return profile.workDays.includes(weekday) ? "work" : "off";
+  }
+  return buildScheduleEntries(weekday, employees, settings).length ? "work" : "off";
+};
+
+const createSlug = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 32);
+
+const generateToken = (base: string) => {
+  const suffix = Math.floor(1000 + Math.random() * 9000);
+  return `${base}-${suffix}`;
+};
+
+const generateId = (base: string) => `${base}-${Date.now().toString(36)}`;
+
 export default function Home() {
-  const [now, setNow] = useState(() => new Date());
-  const [shiftActive, setShiftActive] = useState(false);
-  const [shiftNotice, setShiftNotice] = useState("");
-  const [shiftNoticeTone, setShiftNoticeTone] = useState<ShiftNoticeTone>("default");
+  const [data, setData] = useState<AppData>(DEFAULT_DATA);
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState("");
+  const [origin, setOrigin] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [geoStatus, setGeoStatus] = useState<GeoStatus>("idle");
   const [geoInfo, setGeoInfo] = useState<GeoInfo>({});
+  const [shiftNotice, setShiftNotice] = useState("");
+  const [shiftNoticeTone, setShiftNoticeTone] = useState<ShiftNoticeTone>("default");
   const [viewMonth, setViewMonth] = useState(() => new Date());
   const [selectedDate, setSelectedDate] = useState(() => new Date());
-  const [currentUser, setCurrentUser] = useState<Account | null>(null);
-  const [loginError, setLoginError] = useState("");
-  const [origin, setOrigin] = useState("");
+  const [reportRange, setReportRange] = useState<ReportRange>("month");
+  const [taskForm, setTaskForm] = useState({ title: "", points: 10 });
+  const [employeeForm, setEmployeeForm] = useState({
+    id: "",
+    name: "",
+    email: "",
+    role: "staff" as Role,
+    token: "",
+    canPunch: true,
+    shiftStart: DEFAULT_SETTINGS.shiftStart,
+    shiftEnd: DEFAULT_SETTINGS.shiftEnd,
+    workDays: [] as number[],
+    payType: "daily" as PayInfo["type"],
+    payAmount: 0,
+    payNote: "",
+    isTest: false,
+  });
+  const [employeeMode, setEmployeeMode] = useState<"new" | "edit">("new");
+  const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState("");
+  const [now, setNow] = useState(() => new Date());
 
   const watchIdRef = useRef<number | null>(null);
   const shiftActiveRef = useRef(false);
 
+  const currentUser = data.employees.find((emp) => emp.id === currentUserId) ?? null;
   const isAdmin = currentUser?.role === "admin";
-  const canPunch = currentUser?.role === "staff";
+  const canPunch = currentUser?.canPunch ?? false;
 
-  const personalProfile =
-    currentUser?.role === "staff"
-      ? STAFF_PROFILES.find((profile) => profile.id === currentUser.id) ?? null
-      : null;
+  const personalProfile = currentUser?.role === "staff" ? currentUser : null;
+  const geofence = data.settings;
+
+  const teamAccounts = data.employees.filter(
+    (employee) => employee.canPunch && !employee.isTest
+  );
+  const testAccount = data.employees.find((employee) => employee.isTest) ?? null;
+  const adminAccounts = data.employees.filter((employee) => employee.role === "admin");
+
+  const openRecord = useMemo(() => {
+    if (!currentUserId) {
+      return null;
+    }
+    return (
+      data.punchRecords.find(
+        (record) => record.userId === currentUserId && !record.endAt
+      ) ?? null
+    );
+  }, [data.punchRecords, currentUserId]);
+
+  const shiftActive = Boolean(openRecord);
 
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -301,7 +476,44 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (currentUser || typeof window === "undefined") {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    if (!saved) {
+      setDataLoaded(true);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(saved) as Partial<AppData>;
+      setData({
+        employees: Array.isArray(parsed.employees)
+          ? parsed.employees
+          : DEFAULT_DATA.employees,
+        settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
+        tasks: Array.isArray(parsed.tasks) ? parsed.tasks : DEFAULT_DATA.tasks,
+        completions: Array.isArray(parsed.completions) ? parsed.completions : [],
+        timeOffRequests: Array.isArray(parsed.timeOffRequests)
+          ? parsed.timeOffRequests
+          : [],
+        punchRecords: Array.isArray(parsed.punchRecords) ? parsed.punchRecords : [],
+      });
+    } catch {
+      setData(DEFAULT_DATA);
+    } finally {
+      setDataLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!dataLoaded || typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  }, [data, dataLoaded]);
+
+  useEffect(() => {
+    if (!dataLoaded || currentUserId || typeof window === "undefined") {
       return;
     }
 
@@ -311,34 +523,37 @@ export default function Home() {
       return;
     }
 
-    const matchingAccount = DEMO_ACCOUNTS.find(
-      (account) => account.token === token
-    );
-
+    const matchingAccount = data.employees.find((employee) => employee.token === token);
     if (!matchingAccount) {
       setLoginError("Link invalido ou expirado");
       return;
     }
 
-    setCurrentUser({
-      id: matchingAccount.id,
-      name: matchingAccount.name,
-      email: matchingAccount.email,
-      role: matchingAccount.role,
-    });
+    setCurrentUserId(matchingAccount.id);
     setLoginError("");
     window.history.replaceState({}, "", window.location.pathname);
-  }, [currentUser]);
+  }, [dataLoaded, currentUserId, data.employees]);
 
   useEffect(() => {
-    return () => {
-      if (typeof navigator !== "undefined" && navigator.geolocation) {
-        if (watchIdRef.current !== null) {
-          navigator.geolocation.clearWatch(watchIdRef.current);
-          watchIdRef.current = null;
-        }
-      }
-    };
+    if (currentUserId && !currentUser) {
+      setCurrentUserId(null);
+    }
+  }, [currentUserId, currentUser]);
+
+  useEffect(() => {
+    if (!canPunch) {
+      stopWatch();
+      return;
+    }
+    if (shiftActive) {
+      startWatch();
+    } else {
+      stopWatch();
+    }
+  }, [shiftActive, canPunch]);
+
+  useEffect(() => {
+    return () => stopWatch();
   }, []);
 
   const stopWatch = () => {
@@ -355,10 +570,10 @@ export default function Home() {
     const distance = getDistanceMeters(
       position.coords.latitude,
       position.coords.longitude,
-      GEOFENCE.lat,
-      GEOFENCE.lng
+      geofence.geofenceLat,
+      geofence.geofenceLng
     );
-    const inside = distance <= GEOFENCE.radiusMeters;
+    const inside = distance <= geofence.geofenceRadius;
 
     setGeoStatus("ready");
     setGeoInfo({
@@ -407,10 +622,9 @@ export default function Home() {
       (position) => {
         const inside = updateGeoFromPosition(position);
         if (!inside && shiftActiveRef.current) {
-          setShiftActive(false);
+          closeShift("geofence");
           setShiftNotice("Saiu do ponto, turno encerrado automaticamente.");
           setShiftNoticeTone("error");
-          stopWatch();
         }
       },
       () => {
@@ -429,7 +643,10 @@ export default function Home() {
     );
   };
 
-  const attemptStartShift = () => {
+  const startShift = () => {
+    if (!currentUserId) {
+      return;
+    }
     if (!canPunch) {
       setShiftNotice("Conta sem ponto.");
       setShiftNoticeTone("default");
@@ -452,16 +669,24 @@ export default function Home() {
       (position) => {
         const inside = updateGeoFromPosition(position);
         if (!inside) {
-          setShiftActive(false);
           setShiftNotice("Voce esta fora do ponto permitido.");
           setShiftNoticeTone("error");
           return;
         }
 
-        setShiftActive(true);
+        const newRecord: PunchRecord = {
+          id: `rec_${Date.now()}`,
+          userId: currentUserId,
+          startAt: new Date().toISOString(),
+        };
+
+        setData((prev) => ({
+          ...prev,
+          punchRecords: [...prev.punchRecords, newRecord],
+        }));
+
         setShiftNotice("Turno iniciado dentro do raio.");
         setShiftNoticeTone("success");
-        startWatch();
       },
       () => {
         setGeoStatus("error");
@@ -477,22 +702,36 @@ export default function Home() {
     );
   };
 
+  const closeShift = (reason: "manual" | "geofence") => {
+    if (!openRecord) {
+      return;
+    }
+    const closedAt = new Date().toISOString();
+
+    setData((prev) => ({
+      ...prev,
+      punchRecords: prev.punchRecords.map((record) =>
+        record.id === openRecord.id
+          ? { ...record, endAt: closedAt, closedBy: reason }
+          : record
+      ),
+    }));
+  };
+
   const handleShiftToggle = () => {
     if (shiftActive) {
-      setShiftActive(false);
+      closeShift("manual");
       setShiftNotice("Turno encerrado.");
       setShiftNoticeTone("default");
-      stopWatch();
       return;
     }
 
-    attemptStartShift();
+    startShift();
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
+    setCurrentUserId(null);
     setCopiedToken("");
-    setShiftActive(false);
     setShiftNotice("");
     setShiftNoticeTone("default");
     stopWatch();
@@ -512,6 +751,199 @@ export default function Home() {
     } catch {
       setCopiedToken("");
     }
+  };
+
+  const handleTaskComplete = (taskId: string) => {
+    if (!currentUserId) {
+      return;
+    }
+    const alreadyCompleted = data.completions.some((completion) => {
+      if (completion.taskId !== taskId || completion.userId !== currentUserId) {
+        return false;
+      }
+      return isSameDay(new Date(completion.date), now);
+    });
+
+    if (alreadyCompleted) {
+      return;
+    }
+
+    const completion: TaskCompletion = {
+      id: `cmp_${Date.now()}`,
+      taskId,
+      userId: currentUserId,
+      date: new Date().toISOString(),
+    };
+
+    setData((prev) => ({
+      ...prev,
+      completions: [...prev.completions, completion],
+    }));
+  };
+
+  const handleAddTask = () => {
+    if (!taskForm.title.trim()) {
+      return;
+    }
+    const newTask: Task = {
+      id: `task_${Date.now()}`,
+      title: taskForm.title.trim(),
+      points: Math.max(1, Number(taskForm.points) || 1),
+      active: true,
+    };
+
+    setData((prev) => ({
+      ...prev,
+      tasks: [...prev.tasks, newTask],
+    }));
+    setTaskForm({ title: "", points: 10 });
+  };
+
+  const handleToggleTask = (taskId: string) => {
+    setData((prev) => ({
+      ...prev,
+      tasks: prev.tasks.map((task) =>
+        task.id === taskId ? { ...task, active: !task.active } : task
+      ),
+    }));
+  };
+
+  const handleRemoveTask = (taskId: string) => {
+    setData((prev) => ({
+      ...prev,
+      tasks: prev.tasks.filter((task) => task.id !== taskId),
+    }));
+  };
+
+  const handleStartEditEmployee = (employee: Employee) => {
+    setEmployeeMode("edit");
+    setEditingEmployeeId(employee.id);
+    setEmployeeForm({
+      id: employee.id,
+      name: employee.name,
+      email: employee.email,
+      role: employee.role,
+      token: employee.token,
+      canPunch: employee.canPunch,
+      shiftStart: employee.shiftStart,
+      shiftEnd: employee.shiftEnd,
+      workDays: employee.workDays,
+      payType: employee.pay?.type ?? "daily",
+      payAmount: employee.pay?.amount ?? 0,
+      payNote: employee.pay?.note ?? "",
+      isTest: employee.isTest ?? false,
+    });
+  };
+
+  const resetEmployeeForm = () => {
+    setEmployeeMode("new");
+    setEditingEmployeeId(null);
+    setEmployeeForm({
+      id: "",
+      name: "",
+      email: "",
+      role: "staff",
+      token: "",
+      canPunch: true,
+      shiftStart: data.settings.shiftStart,
+      shiftEnd: data.settings.shiftEnd,
+      workDays: [],
+      payType: "daily",
+      payAmount: 0,
+      payNote: "",
+      isTest: false,
+    });
+  };
+
+  const handleSaveEmployee = () => {
+    if (!employeeForm.name.trim()) {
+      return;
+    }
+
+    const slug = createSlug(employeeForm.name);
+    const isNew = employeeMode === "new" || !editingEmployeeId;
+    const id = isNew ? generateId(slug || "staff") : employeeForm.id;
+    const token = isNew
+      ? generateToken(slug || "staff")
+      : employeeForm.token || generateToken(slug || "staff");
+
+    const newEmployee: Employee = {
+      id,
+      name: employeeForm.name.trim(),
+      email: employeeForm.email.trim(),
+      role: employeeForm.role,
+      token,
+      canPunch: employeeForm.canPunch,
+      shiftStart: employeeForm.shiftStart,
+      shiftEnd: employeeForm.shiftEnd,
+      workDays: employeeForm.workDays,
+      isTest: employeeForm.isTest,
+      pay: employeeForm.payAmount
+        ? {
+            type: employeeForm.payType,
+            amount: employeeForm.payAmount,
+            note: employeeForm.payNote,
+          }
+        : undefined,
+    };
+
+    setData((prev) => {
+      const existing = prev.employees.some((employee) => employee.id === id);
+      return {
+        ...prev,
+        employees: existing
+          ? prev.employees.map((employee) =>
+              employee.id === id ? newEmployee : employee
+            )
+          : [...prev.employees, newEmployee],
+      };
+    });
+
+    resetEmployeeForm();
+  };
+
+  const handleRemoveEmployee = (employeeId: string) => {
+    if (employeeId === currentUserId) {
+      return;
+    }
+    setData((prev) => ({
+      ...prev,
+      employees: prev.employees.filter((employee) => employee.id !== employeeId),
+    }));
+  };
+
+  const toggleWorkDay = (dayIndex: number) => {
+    setEmployeeForm((prev) => {
+      const exists = prev.workDays.includes(dayIndex);
+      return {
+        ...prev,
+        workDays: exists
+          ? prev.workDays.filter((day) => day !== dayIndex)
+          : [...prev.workDays, dayIndex],
+      };
+    });
+  };
+
+  const handleSettingsChange = (patch: Partial<Settings>) => {
+    setData((prev) => ({
+      ...prev,
+      settings: { ...prev.settings, ...patch },
+    }));
+  };
+
+  const handleCleaningParticipantToggle = (id: string) => {
+    setData((prev) => {
+      const exists = prev.settings.cleaningParticipants.includes(id);
+      return {
+        ...prev,
+        settings: {
+          ...prev.settings,
+          cleaningParticipants: exists
+            ? prev.settings.cleaningParticipants.filter((item) => item !== id)
+            : [...prev.settings.cleaningParticipants, id],
+        },
+      };
+    });
   };
 
   const timeString = useMemo(
@@ -543,160 +975,376 @@ export default function Home() {
     [viewMonth]
   );
 
-  const calendarCells = useMemo(() => {
-    const year = viewMonth.getFullYear();
-    const month = viewMonth.getMonth();
-    const firstDay = new Date(year, month, 1);
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const offset = (firstDay.getDay() + 6) % 7;
-    const totalCells = Math.ceil((offset + daysInMonth) / 7) * 7;
+  const reportStart = useMemo(() => getRangeStart(reportRange), [reportRange]);
 
-    return Array.from({ length: totalCells }, (_, index) => {
-      const dayNumber = index - offset + 1;
-      const date = new Date(year, month, dayNumber);
-      const isCurrentMonth = dayNumber >= 1 && dayNumber <= daysInMonth;
-      const dayType = getDayType(date.getDay(), personalProfile);
+  const requestMap = useMemo(() => {
+    const map = new Map<string, TimeOffRequest>();
+    if (!currentUserId) {
+      return map;
+    }
+    data.timeOffRequests
+      .filter((request) => request.userId === currentUserId)
+      .forEach((request) => map.set(request.date, request));
+    return map;
+  }, [data.timeOffRequests, currentUserId]);
 
-      return {
-        date,
-        isCurrentMonth,
-        isToday: isSameDay(date, now),
-        isSelected: isSameDay(date, selectedDate),
-        dayType,
-      };
-    });
-  }, [viewMonth, selectedDate, now, personalProfile]);
-
-  const selectedEntries = useMemo(
-    () => getEntriesForDay(selectedDate.getDay()),
+  const selectedDateKey = useMemo(
+    () => selectedDate.toISOString().split("T")[0],
     [selectedDate]
   );
 
-  const personalStatus = personalProfile
-    ? personalProfile.workDays.includes(selectedDate.getDay())
-      ? "work"
-      : "off"
+  const selectedRequest = currentUserId
+    ? requestMap.get(selectedDateKey) ?? null
     : null;
 
-  const selectedDayType = getDayType(selectedDate.getDay(), personalProfile);
-  const formattedSelectedDate = selectedDate.toLocaleDateString("pt-BR", {
-    weekday: "short",
-    day: "2-digit",
-    month: "long",
-  });
+  const scheduleEntries = useMemo(
+    () =>
+      buildScheduleEntries(
+        selectedDate.getDay(),
+        data.employees,
+        data.settings
+      ),
+    [selectedDate, data.employees, data.settings]
+  );
 
-  const legendWorkLabel = personalProfile ? "Seu trabalho" : "Equipe ativa";
-  const legendOffLabel = personalProfile ? "Sua folga" : "Sem equipe";
+  const calendarDays = useMemo(() => {
+    const monthStart = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+    const startOffset = (monthStart.getDay() + 6) % 7;
+    const gridStart = new Date(monthStart);
+    gridStart.setDate(monthStart.getDate() - startOffset);
 
-  const geoMinutesAgo = geoInfo.updatedAt
-    ? Math.max(0, Math.floor((now.getTime() - geoInfo.updatedAt.getTime()) / 60000))
-    : null;
+    const days = [] as Array<{
+      date: Date;
+      key: string;
+      inMonth: boolean;
+      isToday: boolean;
+      isSelected: boolean;
+      dayType: "work" | "off";
+      requestStatus?: TimeOffRequest["status"];
+    }>;
 
-  const distanceLabel =
-    geoInfo.distance !== undefined ? `${Math.round(geoInfo.distance)}m` : "--";
+    for (let i = 0; i < 42; i += 1) {
+      const date = new Date(gridStart);
+      date.setDate(gridStart.getDate() + i);
+      const key = date.toISOString().split("T")[0];
+      const inMonth = date.getMonth() === viewMonth.getMonth();
+      const isToday = isSameDay(date, now);
+      const isSelected = isSameDay(date, selectedDate);
+      const dayType = getDayType(
+        date.getDay(),
+        personalProfile,
+        data.employees,
+        data.settings
+      );
+      const request = requestMap.get(key);
 
-  const insideLabel =
-    geoInfo.inside === undefined
-      ? "Sem verificacao"
-      : geoInfo.inside
-        ? "Dentro do ponto"
-        : "Fora do ponto";
+      days.push({
+        date,
+        key,
+        inMonth,
+        isToday,
+        isSelected,
+        dayType,
+        requestStatus: request?.status,
+      });
+    }
 
-  const geoTitle =
-    geoStatus === "ready"
-      ? geoInfo.inside === undefined
-        ? "GPS pronto"
-        : geoInfo.inside
-          ? "No ponto"
-          : "Fora do ponto"
-      : geoStatus === "loading"
-        ? "Buscando sinal"
-        : geoStatus === "error"
-          ? "GPS indisponivel"
-          : "Aguardando GPS";
+    return days;
+  }, [
+    viewMonth,
+    selectedDate,
+    data.employees,
+    data.settings,
+    personalProfile,
+    requestMap,
+    now,
+  ]);
 
-  const geoDetail =
-    geoStatus === "ready"
-      ? `Ponto ${GEOFENCE.plusCode} - Distancia ${distanceLabel} - ${insideLabel} - Atualizado ha ${
-          geoMinutesAgo ?? 0
-        } min`
-      : geoStatus === "loading"
-        ? "Solicitando localizacao"
-        : geoStatus === "error"
-          ? geoInfo.error ?? "Permissao necessaria"
-          : "Clique para atualizar o local";
+  const activeTasks = useMemo(
+    () => data.tasks.filter((task) => task.active),
+    [data.tasks]
+  );
 
-  const goPrevMonth = () =>
-    setViewMonth((prev) => {
-      const next = new Date(prev.getFullYear(), prev.getMonth() - 1, 1);
-      setSelectedDate(next);
-      return next;
+  const completedToday = useMemo(() => {
+    const set = new Set<string>();
+    if (!currentUserId) {
+      return set;
+    }
+    data.completions.forEach((completion) => {
+      if (completion.userId !== currentUserId) {
+        return;
+      }
+      if (!isSameDay(new Date(completion.date), now)) {
+        return;
+      }
+      set.add(completion.taskId);
     });
-  const goNextMonth = () =>
-    setViewMonth((prev) => {
-      const next = new Date(prev.getFullYear(), prev.getMonth() + 1, 1);
-      setSelectedDate(next);
-      return next;
+    return set;
+  }, [data.completions, currentUserId, now]);
+
+  const personalRequests = useMemo(() => {
+    if (!currentUserId) {
+      return [] as TimeOffRequest[];
+    }
+    return data.timeOffRequests
+      .filter((request) => request.userId === currentUserId)
+      .slice()
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [data.timeOffRequests, currentUserId]);
+
+  const adminRequests = useMemo(
+    () =>
+      data.timeOffRequests
+        .slice()
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    [data.timeOffRequests]
+  );
+
+  const tasksById = useMemo(() => {
+    const map = new Map<string, Task>();
+    data.tasks.forEach((task) => map.set(task.id, task));
+    return map;
+  }, [data.tasks]);
+
+  const pointsByUser = useMemo(() => {
+    const totals = new Map<string, number>();
+    data.completions.forEach((completion) => {
+      const completedAt = new Date(completion.date);
+      if (completedAt < reportStart) {
+        return;
+      }
+      const task = tasksById.get(completion.taskId);
+      const points = task?.points ?? 0;
+      totals.set(
+        completion.userId,
+        (totals.get(completion.userId) ?? 0) + points
+      );
     });
-  const goToday = () => {
-    const today = new Date();
-    setViewMonth(new Date(today.getFullYear(), today.getMonth(), 1));
-    setSelectedDate(today);
+    return totals;
+  }, [data.completions, tasksById, reportStart]);
+
+  const formatMinutes = (value: number) => {
+    const rounded = Math.round(value);
+    const hours = Math.floor(rounded / 60);
+    const minutes = rounded % 60;
+    return `${hours}h ${minutes}m`;
+  };
+
+  const computeMetrics = (employee: Employee) => {
+    const records = data.punchRecords.filter(
+      (record) => record.userId === employee.id && record.endAt
+    );
+
+    let totalMinutes = 0;
+    let lateCount = 0;
+    let overtimeMinutes = 0;
+    const daySet = new Set<string>();
+
+    records.forEach((record) => {
+      const start = new Date(record.startAt);
+      if (start < reportStart) {
+        return;
+      }
+      if (!record.endAt) {
+        return;
+      }
+      const end = new Date(record.endAt);
+      const duration = Math.max(0, (end.getTime() - start.getTime()) / 60000);
+      totalMinutes += duration;
+      daySet.add(start.toDateString());
+
+      const shiftStartMinutes = timeToMinutes(
+        employee.shiftStart || data.settings.shiftStart
+      );
+      const lateAfter = shiftStartMinutes + data.settings.toleranceMinutes;
+      const startMinutes = getMinutesOfDay(start);
+      if (startMinutes > lateAfter) {
+        lateCount += 1;
+      }
+
+      const overtimeAfter = timeToMinutes(
+        data.settings.overtimeAfter || employee.shiftEnd
+      );
+      const endMinutes = getMinutesOfDay(end);
+      if (endMinutes > overtimeAfter) {
+        overtimeMinutes += endMinutes - overtimeAfter;
+      }
+    });
+
+    return {
+      totalMinutes,
+      lateCount,
+      overtimeMinutes,
+      daysWorked: daySet.size,
+    };
+  };
+
+  const reportRows = useMemo(
+    () =>
+      data.employees
+        .filter((employee) => employee.role !== "admin")
+        .map((employee) => {
+          const metrics = computeMetrics(employee);
+          return {
+            id: employee.id,
+            name: employee.name,
+            role: employee.role,
+            ...metrics,
+            points: pointsByUser.get(employee.id) ?? 0,
+          };
+        }),
+    [data.employees, data.punchRecords, data.settings, reportStart, pointsByUser]
+  );
+
+  const currentMetrics = useMemo(() => {
+    if (!currentUser) {
+      return null;
+    }
+    return reportRows.find((row) => row.id === currentUser.id) ?? null;
+  }, [currentUser, reportRows]);
+
+  const pendingRequests = useMemo(
+    () =>
+      data.timeOffRequests.filter((request) => request.status === "pending")
+        .length,
+    [data.timeOffRequests]
+  );
+
+  const handlePrevMonth = () => {
+    setViewMonth(
+      (prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)
+    );
+  };
+
+  const handleNextMonth = () => {
+    setViewMonth(
+      (prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)
+    );
+  };
+
+  const handleSelectDate = (date: Date) => {
+    setSelectedDate(date);
+  };
+
+  const handleToggleTimeOff = () => {
+    if (!currentUserId) {
+      return;
+    }
+    const existing = requestMap.get(selectedDateKey);
+    if (existing) {
+      if (existing.status !== "pending") {
+        return;
+      }
+      setData((prev) => ({
+        ...prev,
+        timeOffRequests: prev.timeOffRequests.filter(
+          (request) => request.id !== existing.id
+        ),
+      }));
+      return;
+    }
+
+    const request: TimeOffRequest = {
+      id: `req_${Date.now()}`,
+      userId: currentUserId,
+      date: selectedDateKey,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    };
+
+    setData((prev) => ({
+      ...prev,
+      timeOffRequests: [...prev.timeOffRequests, request],
+    }));
+  };
+
+  const handleUpdateTimeOffStatus = (
+    id: string,
+    status: TimeOffRequest["status"]
+  ) => {
+    setData((prev) => ({
+      ...prev,
+      timeOffRequests: prev.timeOffRequests.map((request) =>
+        request.id === id ? { ...request, status } : request
+      ),
+    }));
+  };
+
+  const handleRemoveTimeOff = (id: string) => {
+    setData((prev) => ({
+      ...prev,
+      timeOffRequests: prev.timeOffRequests.filter((request) => request.id !== id),
+    }));
   };
 
   if (!currentUser) {
     return (
-      <div className="page login">
-        <main className="login-shell">
-          <div className="login-card">
-            <p className="login-brand">Ponto Vivo</p>
-            <h1>Acesso por link</h1>
-            <p className="login-subtitle">
-              Este app funciona apenas com links individuais. Abra o link enviado
-              pelo admin.
-            </p>
-            {loginError ? <span className="login-error">{loginError}</span> : null}
-            <div className="login-hint">
-              <span>Precisa de acesso?</span>
-              <span>Fale com o admin para gerar seu link.</span>
-            </div>
+      <div className="login-shell">
+        <div className="login-card">
+          <span className="login-brand">Ponto Vivo</span>
+          <h1>Acesso por link</h1>
+          <p className="login-subtitle">
+            Este app funciona apenas com link de acesso enviado pelo admin.
+          </p>
+          {loginError ? <p className="login-error">{loginError}</p> : null}
+          <div className="login-hint">
+            <span>
+              Exemplo: {origin ? `${origin}/?autologin=token` : "/?autologin=token"}
+            </span>
+            <span>Se precisar, solicite o link ao admin.</span>
           </div>
-        </main>
+        </div>
       </div>
     );
   }
+
+  const timeOffLabels: Record<TimeOffRequest["status"], string> = {
+    pending: "Pendente",
+    approved: "Aprovada",
+    denied: "Negada",
+  };
+
+  const currentPoints = currentUser
+    ? pointsByUser.get(currentUser.id) ?? 0
+    : 0;
+
+  const pointsToday = Array.from(completedToday).reduce((total, taskId) => {
+    const task = tasksById.get(taskId);
+    return total + (task?.points ?? 0);
+  }, 0);
+
+  const selectedDayType = getDayType(
+    selectedDate.getDay(),
+    personalProfile,
+    data.employees,
+    data.settings
+  );
+
+  const shiftButtonLabel = shiftActive ? "Finalizar turno" : "Iniciar turno";
+  const shiftButtonDisabled = !canPunch;
 
   return (
     <div className={`page ${menuOpen ? "page--menu-open" : ""}`}>
       <button
         className="menu-toggle"
         type="button"
+        onClick={() => setMenuOpen((prev) => !prev)}
         aria-expanded={menuOpen}
-        aria-controls="ferramentas-menu"
-        onClick={() => setMenuOpen(true)}
       >
-        Ferramentas
+        Menu
       </button>
 
       <div
         className="menu-overlay"
-        role="presentation"
-        aria-hidden={!menuOpen}
         onClick={() => setMenuOpen(false)}
+        aria-hidden="true"
       />
 
-      <aside
-        id="ferramentas-menu"
-        className="menu-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-hidden={!menuOpen}
-        aria-label="Ferramentas da equipe"
-      >
-        <header className="menu-header">
+      <aside className="menu-drawer" aria-hidden={!menuOpen}>
+        <div className="menu-header">
           <div>
-            <p className="menu-title">Ferramentas</p>
-            <p className="menu-subtitle">Ola, {currentUser.name}</p>
+            <div className="menu-title">Menu</div>
+            <div className="menu-subtitle">Bem vindo, {currentUser.name}</div>
           </div>
           <button
             className="menu-close"
@@ -705,20 +1353,20 @@ export default function Home() {
           >
             Fechar
           </button>
-        </header>
+        </div>
 
         <div className="menu-grid">
-          <section className="tool-card tool-card--calendar">
+          <section className="tool-card">
             <div className="card-header">
               <div>
-                <h3>Escala e calendario</h3>
-                <p>Toque no dia para ver a escala e selecionar folga.</p>
+                <h3>Calendario da equipe</h3>
+                <p>Escala, folgas e agenda.</p>
               </div>
               <div className="month-nav">
                 <button
                   className="ghost ghost--icon"
                   type="button"
-                  onClick={goPrevMonth}
+                  onClick={handlePrevMonth}
                   aria-label="Mes anterior"
                 >
                   {"<"}
@@ -727,7 +1375,7 @@ export default function Home() {
                 <button
                   className="ghost ghost--icon"
                   type="button"
-                  onClick={goNextMonth}
+                  onClick={handleNextMonth}
                   aria-label="Proximo mes"
                 >
                   {">"}
@@ -742,25 +1390,24 @@ export default function Home() {
                 ))}
               </div>
               <div className="calendar-days">
-                {calendarCells.map((cell) => (
+                {calendarDays.map((day) => (
                   <button
-                    key={cell.date.toISOString()}
-                    type="button"
-                    className={`calendar-day ${cell.dayType} ${
-                      cell.isCurrentMonth ? "" : "is-outside"
-                    } ${cell.isToday ? "is-today" : ""} ${
-                      cell.isSelected ? "is-selected" : ""
+                    key={day.key}
+                    className={`calendar-day ${day.dayType} ${
+                      day.inMonth ? "" : "is-outside"
+                    } ${day.isToday ? "is-today" : ""} ${
+                      day.isSelected ? "is-selected" : ""
+                    } ${
+                      day.requestStatus ? `request-${day.requestStatus}` : ""
                     }`}
-                    onClick={() => cell.isCurrentMonth && setSelectedDate(cell.date)}
-                    disabled={!cell.isCurrentMonth}
-                    aria-pressed={cell.isSelected}
-                    aria-label={cell.date.toLocaleDateString("pt-BR", {
-                      weekday: "long",
-                      day: "numeric",
-                      month: "long",
-                    })}
+                    type="button"
+                    onClick={() => handleSelectDate(day.date)}
+                    disabled={!day.inMonth}
                   >
-                    {cell.date.getDate()}
+                    {day.date.getDate()}
+                    {day.requestStatus ? (
+                      <span className={`request-dot ${day.requestStatus}`} />
+                    ) : null}
                   </button>
                 ))}
               </div>
@@ -769,326 +1416,1089 @@ export default function Home() {
             <div className="calendar-legend">
               <div className="legend-item">
                 <span className="legend-dot work" />
-                {legendWorkLabel}
+                Trabalho
               </div>
               <div className="legend-item">
                 <span className="legend-dot off" />
-                {legendOffLabel}
+                Folga
               </div>
-              <button className="ghost ghost--small" type="button" onClick={goToday}>
-                Ir para hoje
-              </button>
+              <div className="legend-item">
+                <span className="legend-dot request" />
+                Folga solicitada
+              </div>
+            </div>
+
+            <div className="selected-date">
+              <div>
+                <span>Selecionado</span>
+                <strong>{selectedDate.toLocaleDateString("pt-BR")}</strong>
+              </div>
+              <span className={`day-pill ${selectedDayType}`}>
+                {selectedDayType === "work" ? "Trabalho" : "Folga"}
+              </span>
             </div>
 
             <div className="day-details">
-              <div className="day-meta">
-                <div>
-                  <p className="day-title">Dia selecionado</p>
-                  <strong>{formattedSelectedDate}</strong>
-                </div>
-                <span className={`day-pill ${personalStatus ?? selectedDayType}`}>
-                  {personalStatus
-                    ? personalStatus === "work"
-                      ? "Seu turno: trabalho"
-                      : "Seu turno: folga"
-                    : selectedDayType === "work"
-                      ? "Equipe ativa"
-                      : "Sem equipe"}
-                </span>
+              <div className="personal-shift">
+                <span>{personalProfile ? "Seu turno" : "Turno padrao"}</span>
+                <strong>
+                  {personalProfile
+                    ? `${personalProfile.shiftStart}-${personalProfile.shiftEnd}`
+                    : `${data.settings.shiftStart}-${data.settings.shiftEnd}`}
+                </strong>
               </div>
               {personalProfile ? (
-                <div className="personal-shift">
-                  <span>Seu horario:</span>
-                  <strong>{personalProfile.shift}</strong>
-                </div>
+                <span className="entry-note">
+                  Dias: {formatWorkDays(personalProfile.workDays)}
+                </span>
               ) : null}
               <div className="day-entries">
-                {selectedEntries.map((entry) => (
-                  <div
-                    key={`${entry.title}-${entry.time}`}
-                    className={`day-entry ${entry.tone}`}
-                  >
-                    <div className="day-entry-header">
-                      <strong>{entry.title}</strong>
-                      <span>{entry.time}</span>
-                    </div>
-                    {entry.people.length ? (
+                {scheduleEntries.length ? (
+                  scheduleEntries.map((entry) => (
+                    <div
+                      key={`${entry.title}-${entry.time}`}
+                      className={`day-entry ${entry.tone}`}
+                    >
+                      <div className="day-entry-header">
+                        <span>{entry.title}</span>
+                        <span>{entry.time}</span>
+                      </div>
                       <div className="schedule-badges">
-                        {entry.people.map((name) => (
-                          <span key={name} className="badge">
-                            {name}
+                        {entry.people.map((person) => (
+                          <span key={person} className="badge">
+                            {person}
                           </span>
                         ))}
                       </div>
-                    ) : null}
-                    {entry.note ? (
-                      <span className="entry-note">{entry.note}</span>
-                    ) : null}
-                  </div>
-                ))}
+                      {entry.note ? (
+                        <span className="entry-note">{entry.note}</span>
+                      ) : null}
+                    </div>
+                  ))
+                ) : (
+                  <span className="entry-note">
+                    Sem turnos definidos para este dia.
+                  </span>
+                )}
               </div>
             </div>
           </section>
+
           <section className="tool-card">
             <h3>Solicitar folga</h3>
-            <p>Use o calendario para escolher o dia e enviar a solicitacao.</p>
+            <p>Escolha o dia no calendario para enviar sua solicitacao.</p>
             <div className="selected-date">
-              <span>Data selecionada</span>
-              <strong>{formattedSelectedDate}</strong>
-            </div>
-            <div className="selected-date">
-              <span>Solicitante</span>
-              <strong>{currentUser.name}</strong>
-            </div>
-            {personalProfile ? (
-              <div className="selected-date">
-                <span>Seu turno</span>
-                <strong>{personalProfile.shift}</strong>
+              <div>
+                <span>Dia escolhido</span>
+                <strong>{selectedDate.toLocaleDateString("pt-BR")}</strong>
               </div>
+              {selectedRequest ? (
+                <span className={`status-pill ${selectedRequest.status}`}>
+                  {timeOffLabels[selectedRequest.status]}
+                </span>
+              ) : (
+                <span className="day-pill">Novo</span>
+              )}
+            </div>
+            <button
+              className="action-btn"
+              type="button"
+              onClick={handleToggleTimeOff}
+              disabled={
+                !canPunch ||
+                (selectedRequest ? selectedRequest.status !== "pending" : false)
+              }
+            >
+              {selectedRequest
+                ? selectedRequest.status === "pending"
+                  ? "Cancelar solicitacao"
+                  : "Solicitacao registrada"
+                : "Solicitar folga"}
+            </button>
+            {!canPunch ? (
+              <span className="entry-note">
+                Esta conta nao possui ponto nem solicitacao de folga.
+              </span>
             ) : null}
-            <form className="timeoff-form">
-              <label htmlFor="motivo">Motivo</label>
-              <input
-                id="motivo"
-                type="text"
-                placeholder="Ex: consulta medica"
-              />
-
-              <label className="toggle-row" htmlFor="conflito">
-                <input id="conflito" type="checkbox" defaultChecked />
-                Sinalizar conflito com a escala
-              </label>
-              <button className="ghost" type="button">
-                Enviar solicitacao
-              </button>
-            </form>
+            <div className="timeoff-list">
+              {personalRequests.length ? (
+                personalRequests.slice(0, 4).map((request) => (
+                  <div key={request.id} className="timeoff-item">
+                    <div>
+                      <strong>
+                        {new Date(
+                          `${request.date}T00:00:00`
+                        ).toLocaleDateString("pt-BR")}
+                      </strong>
+                      <span className="entry-note">
+                        Solicitado em {request.createdAt
+                          ? new Date(request.createdAt).toLocaleDateString(
+                              "pt-BR"
+                            )
+                          : "data nao registrada"}
+                      </span>
+                    </div>
+                    <span className={`status-pill ${request.status}`}>
+                      {timeOffLabels[request.status]}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <span className="entry-note">Nenhuma solicitacao enviada.</span>
+              )}
+            </div>
           </section>
 
           <section className="tool-card">
-            <h3>GPS do ponto</h3>
-            <p>
-              Geolocalizacao ativa para validar batidas dentro do raio permitido.
-            </p>
+            <h3>GPS e ponto</h3>
+            <p>Use o GPS para validar o inicio e fim do turno.</p>
             <div className="gps-status">
-              <span className={`gps-dot ${geoStatus}`} aria-hidden="true" />
+              <span className={`gps-dot ${geoStatus}`} />
               <div>
-                <strong>{geoTitle}</strong>
-                <span>{geoDetail}</span>
+                <strong>
+                  {geoStatus === "ready"
+                    ? geoInfo.inside
+                      ? "Dentro do raio"
+                      : "Fora do raio"
+                    : geoStatus === "loading"
+                    ? "Buscando GPS"
+                    : geoStatus === "error"
+                    ? "GPS indisponivel"
+                    : "Sem leitura"}
+                </strong>
+                <span>
+                  {geoInfo.error
+                    ? geoInfo.error
+                    : `Raio permitido: ${geofence.geofenceRadius}m`}
+                </span>
               </div>
             </div>
             <div className="gps-meta">
-              <span>Ponto: {GEOFENCE.name}</span>
-              <span>Raio permitido: {GEOFENCE.radiusMeters}m</span>
+              <span>Local: {geofence.geofenceName}</span>
+              <span>Plus code: {geofence.geofencePlusCode}</span>
+              <span>
+                Ultima leitura: {geoInfo.updatedAt
+                  ? geoInfo.updatedAt.toLocaleTimeString("pt-BR")
+                  : "Sem leitura"}
+              </span>
+              {geoInfo.distance !== undefined ? (
+                <span>Distancia: {Math.round(geoInfo.distance)}m</span>
+              ) : null}
             </div>
-            <button
-              className="ghost"
-              type="button"
-              onClick={requestLocation}
-              disabled={geoStatus === "loading"}
-            >
-              {geoStatus === "loading" ? "Localizando..." : "Atualizar local"}
-            </button>
-          </section>
-          <section className="tool-card">
-            <h3>Resumo do dia</h3>
-            <p>Acompanhe rapidamente o que esta acontecendo agora.</p>
-            <div className="stat-grid">
-              <div className="stat">
-                <span className="stat-label">Batidas hoje</span>
-                <strong className="stat-value">2</strong>
-                <span className="stat-note">Ultima 16:03</span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">Equipe em campo</span>
-                <strong className="stat-value">2</strong>
-                <span className="stat-note">Turno 16-22</span>
-              </div>
-              <div className="stat">
-                <span className="stat-label">Alertas</span>
-                <strong className="stat-value">0</strong>
-                <span className="stat-note">Sem pendencias</span>
-              </div>
+            <div className="action-grid">
+              <button className="action-btn" type="button" onClick={requestLocation}>
+                Atualizar GPS
+              </button>
+              <button
+                className="action-btn"
+                type="button"
+                onClick={handleShiftToggle}
+                disabled={shiftButtonDisabled}
+              >
+                {shiftButtonLabel}
+              </button>
             </div>
           </section>
 
           <section className="tool-card">
-            <h3>Acoes rapidas</h3>
-            <p>Atalhos para tarefas frequentes da equipe.</p>
-            <div className="action-grid">
-              <button className="action-btn" type="button">
-                Enviar aviso
-              </button>
-              <button className="action-btn" type="button">
-                Abrir chat
-              </button>
-              <button className="action-btn" type="button">
-                Gerar relatorio
-              </button>
-              <button className="action-btn" type="button">
-                Solicitar cobertura
-              </button>
+            <h3>Tarefas e pontos</h3>
+            <p>Complete tarefas e acumule pontos do time.</p>
+            <div className="task-summary">
+              <div>
+                <span className="stat-label">Pontos hoje</span>
+                <strong className="stat-value">{pointsToday}</strong>
+              </div>
+              <div>
+                <span className="stat-label">Total no periodo</span>
+                <strong className="stat-value">{currentPoints}</strong>
+              </div>
+            </div>
+            <div className="task-list">
+              {activeTasks.length ? (
+                activeTasks.map((task) => {
+                  const isDone = completedToday.has(task.id);
+                  return (
+                    <div
+                      key={task.id}
+                      className={`task-item ${isDone ? "is-done" : ""}`}
+                    >
+                      <div className="task-meta">
+                        <strong>{task.title}</strong>
+                        <span className="task-points">{task.points} pontos</span>
+                      </div>
+                      <button
+                        className="ghost ghost--small"
+                        type="button"
+                        onClick={() => handleTaskComplete(task.id)}
+                        disabled={isDone || !canPunch}
+                      >
+                        {isDone ? "Concluida" : "Concluir"}
+                      </button>
+                    </div>
+                  );
+                })
+              ) : (
+                <span className="entry-note">Nenhuma tarefa ativa.</span>
+              )}
+            </div>
+          </section>
+
+          <section className="tool-card">
+            <h3>Resumo rapido</h3>
+            <p>Indicadores do periodo selecionado.</p>
+            <div className="form-grid">
+              <div>
+                <label>Periodo</label>
+                <select
+                  value={reportRange}
+                  onChange={(event) =>
+                    setReportRange(event.target.value as ReportRange)
+                  }
+                >
+                  <option value="week">Semana atual</option>
+                  <option value="month">Mes atual</option>
+                  <option value="30d">Ultimos 30 dias</option>
+                </select>
+              </div>
+            </div>
+            <div className="stat-grid">
+              <div className="stat">
+                <span className="stat-label">Horas</span>
+                <span className="stat-value">
+                  {currentMetrics
+                    ? formatMinutes(currentMetrics.totalMinutes)
+                    : "0h 0m"}
+                </span>
+                <span className="stat-note">
+                  Dias: {currentMetrics?.daysWorked ?? 0}
+                </span>
+              </div>
+              <div className="stat">
+                <span className="stat-label">Atrasos</span>
+                <span className="stat-value">{currentMetrics?.lateCount ?? 0}</span>
+                <span className="stat-note">Tolerancia {data.settings.toleranceMinutes}m</span>
+              </div>
+              <div className="stat">
+                <span className="stat-label">Hora extra</span>
+                <span className="stat-value">
+                  {currentMetrics
+                    ? formatMinutes(currentMetrics.overtimeMinutes)
+                    : "0h 0m"}
+                </span>
+                <span className="stat-note">Apos {data.settings.overtimeAfter}</span>
+              </div>
+              <div className="stat">
+                <span className="stat-label">Pontos</span>
+                <span className="stat-value">{currentPoints}</span>
+                <span className="stat-note">Tarefas concluidas</span>
+              </div>
+              {isAdmin ? (
+                <div className="stat">
+                  <span className="stat-label">Solicitacoes pendentes</span>
+                  <span className="stat-value">{pendingRequests}</span>
+                  <span className="stat-note">
+                    Equipe ativa {data.employees.filter(
+                      (employee) => employee.role !== "admin"
+                    ).length}
+                  </span>
+                </div>
+              ) : null}
             </div>
           </section>
 
           <section className="tool-card account-card">
             <div className="account-header">
-              <h3>Conta</h3>
-              <span className={`role-pill ${isAdmin ? "admin" : "staff"}`}>
-                {isAdmin ? "Admin" : "Equipe"}
+              <div>
+                <div className="account-name">{currentUser.name}</div>
+                <div className="account-email">
+                  {currentUser.email || "Sem email"}
+                </div>
+              </div>
+              <span className={`role-pill ${currentUser.role}`}>
+                {currentUser.role}
               </span>
             </div>
-            <p className="account-name">{currentUser.name}</p>
-            <p className="account-email">{currentUser.email}</p>
-            <button className="ghost ghost--small" type="button" onClick={handleLogout}>
-              Sair
-            </button>
+            <p className="entry-note">
+              Escala: {formatWorkDays(currentUser.workDays)} | Turno {currentUser.shiftStart}-
+              {currentUser.shiftEnd}
+            </p>
+            <div className="action-grid">
+              <button className="action-btn" type="button" onClick={handleLogout}>
+                Sair
+              </button>
+              {isAdmin ? (
+                <button
+                  className="action-btn"
+                  type="button"
+                  onClick={() => handleCopyLink(currentUser.token)}
+                >
+                  {copiedToken === currentUser.token ? "Copiado" : "Copiar link"}
+                </button>
+              ) : null}
+            </div>
           </section>
 
-          <section
-            className={`tool-card admin-card ${isAdmin ? "" : "admin-card--locked"}`}
-          >
-            <div className="admin-header">
-              <h3>Area admin</h3>
-              <span className="admin-pill">Restrito</span>
-            </div>
-            <p>Funcoes exclusivas para ajuste de escala e aprovacao.</p>
-
-            {isAdmin ? (
-              <>
-                <div className="admin-tools">
-                  <button className="admin-btn" type="button">
-                    Ajustar escala
-                  </button>
-                  <button className="admin-btn" type="button">
-                    Aprovar folgas
-                  </button>
-                  <button className="admin-btn" type="button">
-                    Gerenciar equipe
-                  </button>
-                  <button className="admin-btn" type="button">
-                    Exportar relatorios
-                  </button>
-                </div>
-
-                <div className="admin-links">
-                  <p className="admin-links-title">Links da equipe (ponto)</p>
-                  {TEAM_ACCOUNTS.map((account) => {
-                    const link = `${origin || ""}/?autologin=${account.token}`;
-                    return (
-                      <div key={account.email} className="admin-link-row">
-                        <div>
-                          <strong>{account.name}</strong>
-                          <span className="admin-link-text">{link}</span>
-                        </div>
-                        <button
-                          className="ghost ghost--small"
-                          type="button"
-                          onClick={() => handleCopyLink(account.token)}
-                        >
-                          {copiedToken === account.token ? "Copiado" : "Copiar"}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {TEST_ACCOUNT ? (
-                  <div className="admin-links">
-                    <p className="admin-links-title">Conta de teste</p>
-                    <div className="admin-link-row">
+          {!isAdmin ? (
+            <section className="tool-card admin-card admin-card--locked">
+              <div className="admin-header">
+                <h3>Area admin</h3>
+                <span className="admin-pill">Restrito</span>
+              </div>
+              <p className="admin-locked">
+                Funcoes administrativas sao exclusivas do admin.
+              </p>
+            </section>
+          ) : (
+            <>
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Links de acesso</h3>
+                <span className="admin-pill">Admin</span>
+              </div>
+              <p>Envie links diretos para cada funcionario.</p>
+              <div className="admin-links">
+                <div className="admin-links-title">Equipe</div>
+                {teamAccounts.length ? (
+                  teamAccounts.map((employee) => (
+                    <div key={employee.id} className="admin-link-row">
                       <div>
-                        <strong>{TEST_ACCOUNT.name}</strong>
+                        <strong>{employee.name}</strong>
                         <span className="admin-link-text">
-                          {`${origin || ""}/?autologin=${TEST_ACCOUNT.token}`}
+                          {origin
+                            ? `${origin}/?autologin=${employee.token}`
+                            : `/?autologin=${employee.token}`}
                         </span>
                       </div>
                       <button
                         className="ghost ghost--small"
                         type="button"
-                        onClick={() => handleCopyLink(TEST_ACCOUNT.token)}
+                        onClick={() => handleCopyLink(employee.token)}
                       >
-                        {copiedToken === TEST_ACCOUNT.token ? "Copiado" : "Copiar"}
+                        {copiedToken === employee.token ? "Copiado" : "Copiar"}
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <span className="entry-note">Nenhuma conta com ponto.</span>
+                )}
+                {testAccount ? (
+                  <div className="admin-link-row">
+                    <div>
+                      <strong>{testAccount.name} (teste)</strong>
+                      <span className="admin-link-text">
+                        {origin
+                          ? `${origin}/?autologin=${testAccount.token}`
+                          : `/?autologin=${testAccount.token}`}
+                      </span>
+                    </div>
+                    <button
+                      className="ghost ghost--small"
+                      type="button"
+                      onClick={() => handleCopyLink(testAccount.token)}
+                    >
+                      {copiedToken === testAccount.token ? "Copiado" : "Copiar"}
+                    </button>
+                  </div>
+                ) : null}
+                <div className="admin-links-title">Admin</div>
+                {adminAccounts.map((employee) => (
+                  <div key={employee.id} className="admin-link-row">
+                    <div>
+                      <strong>{employee.name}</strong>
+                      <span className="admin-link-text">
+                        {origin
+                          ? `${origin}/?autologin=${employee.token}`
+                          : `/?autologin=${employee.token}`}
+                      </span>
+                    </div>
+                    <button
+                      className="ghost ghost--small"
+                      type="button"
+                      onClick={() => handleCopyLink(employee.token)}
+                    >
+                      {copiedToken === employee.token ? "Copiado" : "Copiar"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Configuracoes</h3>
+                <span className="admin-pill">Personalizar</span>
+              </div>
+              <p>Defina turno, tolerancia, GPS e limpeza.</p>
+              <div className="form-grid">
+                <div>
+                  <label>Turno padrao</label>
+                  <div className="inline-row">
+                    <input
+                      type="time"
+                      value={data.settings.shiftStart}
+                      onChange={(event) =>
+                        handleSettingsChange({ shiftStart: event.target.value })
+                      }
+                    />
+                    <input
+                      type="time"
+                      value={data.settings.shiftEnd}
+                      onChange={(event) =>
+                        handleSettingsChange({ shiftEnd: event.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="inline-row">
+                  <div>
+                    <label>Tolerancia (min)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={data.settings.toleranceMinutes}
+                      onChange={(event) =>
+                        handleSettingsChange({
+                          toleranceMinutes: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label>Hora extra apos</label>
+                    <input
+                      type="time"
+                      value={data.settings.overtimeAfter}
+                      onChange={(event) =>
+                        handleSettingsChange({ overtimeAfter: event.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label>Geofence (nome do local)</label>
+                  <input
+                    type="text"
+                    value={data.settings.geofenceName}
+                    onChange={(event) =>
+                      handleSettingsChange({ geofenceName: event.target.value })
+                    }
+                  />
+                </div>
+                <div className="inline-row">
+                  <div>
+                    <label>Plus code</label>
+                    <input
+                      type="text"
+                      value={data.settings.geofencePlusCode}
+                      onChange={(event) =>
+                        handleSettingsChange({
+                          geofencePlusCode: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label>Raio (m)</label>
+                    <input
+                      type="number"
+                      min={10}
+                      value={data.settings.geofenceRadius}
+                      onChange={(event) =>
+                        handleSettingsChange({
+                          geofenceRadius: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div className="inline-row">
+                  <div>
+                    <label>Latitude</label>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      value={data.settings.geofenceLat}
+                      onChange={(event) =>
+                        handleSettingsChange({
+                          geofenceLat: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label>Longitude</label>
+                    <input
+                      type="number"
+                      step="0.000001"
+                      value={data.settings.geofenceLng}
+                      onChange={(event) =>
+                        handleSettingsChange({
+                          geofenceLng: Number(event.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label>Limpeza semanal</label>
+                  <div className="inline-row">
+                    <select
+                      value={data.settings.cleaningDay}
+                      onChange={(event) =>
+                        handleSettingsChange({
+                          cleaningDay: Number(event.target.value),
+                        })
+                      }
+                    >
+                      {[0, 1, 2, 3, 4, 5, 6].map((day) => (
+                        <option key={day} value={day}>
+                          {WEEK_LABELS[(day + 6) % 7]}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="time"
+                      value={data.settings.cleaningStart}
+                      onChange={(event) =>
+                        handleSettingsChange({
+                          cleaningStart: event.target.value,
+                        })
+                      }
+                    />
+                    <input
+                      type="time"
+                      value={data.settings.cleaningEnd}
+                      onChange={(event) =>
+                        handleSettingsChange({ cleaningEnd: event.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label>Nota da limpeza</label>
+                  <input
+                    type="text"
+                    value={data.settings.cleaningNote}
+                    onChange={(event) =>
+                      handleSettingsChange({ cleaningNote: event.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <label>Participantes da limpeza</label>
+                  <div className="toggle-list">
+                    {data.employees
+                      .filter((employee) => employee.role !== "admin")
+                      .map((employee) => (
+                        <label key={employee.id} className="toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={data.settings.cleaningParticipants.includes(
+                              employee.id
+                            )}
+                            onChange={() =>
+                              handleCleaningParticipantToggle(employee.id)
+                            }
+                          />
+                          <span>{employee.name}</span>
+                        </label>
+                      ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Cadastro de funcionarios</h3>
+                <span className="admin-pill">Equipe</span>
+              </div>
+              <p>Crie contas, personalize escalas e permissoes.</p>
+              <div className="employee-list">
+                {data.employees.map((employee) => (
+                  <div key={employee.id} className="employee-card">
+                    <div className="employee-head">
+                      <div>
+                        <strong>{employee.name}</strong>
+                        <span className="employee-meta">
+                          {employee.role} | {employee.shiftStart}-{employee.shiftEnd}
+                        </span>
+                        <span className="employee-meta">
+                          Dias: {formatWorkDays(employee.workDays)}
+                        </span>
+                      </div>
+                      <div className="employee-tags">
+                        {employee.isTest ? (
+                          <span className="status-pill pending">Teste</span>
+                        ) : null}
+                        <span
+                          className={`status-pill ${
+                            employee.canPunch ? "approved" : "denied"
+                          }`}
+                        >
+                          {employee.canPunch ? "Ponto" : "Sem ponto"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="employee-actions">
+                      <button
+                        className="ghost ghost--small"
+                        type="button"
+                        onClick={() => handleStartEditEmployee(employee)}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="ghost ghost--small"
+                        type="button"
+                        onClick={() => handleCopyLink(employee.token)}
+                      >
+                        {copiedToken === employee.token ? "Copiado" : "Copiar link"}
+                      </button>
+                      <button
+                        className="ghost ghost--small"
+                        type="button"
+                        onClick={() => handleRemoveEmployee(employee.id)}
+                        disabled={employee.id === currentUserId}
+                      >
+                        Remover
                       </button>
                     </div>
                   </div>
-                ) : null}
+                ))}
+              </div>
 
-                {ADMIN_ACCOUNTS.length ? (
-                  <div className="admin-links">
-                    <p className="admin-links-title">Link admin (privado)</p>
-                    {ADMIN_ACCOUNTS.map((account) => (
-                      <div key={account.email} className="admin-link-row">
+              <div className="employee-form">
+                <h4>{employeeMode === "new" ? "Nova conta" : "Editar conta"}</h4>
+                <div className="form-grid">
+                  <div>
+                    <label>Nome</label>
+                    <input
+                      type="text"
+                      value={employeeForm.name}
+                      onChange={(event) =>
+                        setEmployeeForm((prev) => ({
+                          ...prev,
+                          name: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label>Email</label>
+                    <input
+                      type="email"
+                      value={employeeForm.email}
+                      onChange={(event) =>
+                        setEmployeeForm((prev) => ({
+                          ...prev,
+                          email: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label>Funcao</label>
+                    <select
+                      value={employeeForm.role}
+                      onChange={(event) =>
+                        setEmployeeForm((prev) => ({
+                          ...prev,
+                          role: event.target.value as Role,
+                        }))
+                      }
+                    >
+                      <option value="staff">Staff</option>
+                      <option value="manager">Manager</option>
+                      <option value="support">Support</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Inicio turno</label>
+                      <input
+                        type="time"
+                        value={employeeForm.shiftStart}
+                        onChange={(event) =>
+                          setEmployeeForm((prev) => ({
+                            ...prev,
+                            shiftStart: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Fim turno</label>
+                      <input
+                        type="time"
+                        value={employeeForm.shiftEnd}
+                        onChange={(event) =>
+                          setEmployeeForm((prev) => ({
+                            ...prev,
+                            shiftEnd: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label>Dias trabalhados</label>
+                    <div className="workday-grid">
+                      {[0, 1, 2, 3, 4, 5, 6].map((day) => (
+                        <button
+                          key={day}
+                          type="button"
+                          className={`workday-btn ${
+                            employeeForm.workDays.includes(day) ? "active" : ""
+                          }`}
+                          onClick={() => toggleWorkDay(day)}
+                        >
+                          {WEEK_LABELS[(day + 6) % 7]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label>Token de acesso</label>
+                    <input
+                      type="text"
+                      placeholder="Gerado automaticamente"
+                      value={employeeForm.token}
+                      onChange={(event) =>
+                        setEmployeeForm((prev) => ({
+                          ...prev,
+                          token: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Tipo pagamento</label>
+                      <select
+                        value={employeeForm.payType}
+                        onChange={(event) =>
+                          setEmployeeForm((prev) => ({
+                            ...prev,
+                            payType: event.target.value as PayInfo["type"],
+                          }))
+                        }
+                      >
+                        <option value="daily">Diaria</option>
+                        <option value="monthly">Mensal</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Valor</label>
+                      <input
+                        type="number"
+                        value={employeeForm.payAmount}
+                        onChange={(event) =>
+                          setEmployeeForm((prev) => ({
+                            ...prev,
+                            payAmount: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label>Nota pagamento</label>
+                    <input
+                      type="text"
+                      value={employeeForm.payNote}
+                      onChange={(event) =>
+                        setEmployeeForm((prev) => ({
+                          ...prev,
+                          payNote: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <label className="toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={employeeForm.canPunch}
+                      onChange={(event) =>
+                        setEmployeeForm((prev) => ({
+                          ...prev,
+                          canPunch: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Conta bate ponto</span>
+                  </label>
+                  <label className="toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={employeeForm.isTest}
+                      onChange={(event) =>
+                        setEmployeeForm((prev) => ({
+                          ...prev,
+                          isTest: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Conta de teste</span>
+                  </label>
+                </div>
+                <div className="action-grid">
+                  <button
+                    className="action-btn"
+                    type="button"
+                    onClick={handleSaveEmployee}
+                  >
+                    {employeeMode === "new" ? "Adicionar funcionario" : "Salvar ajustes"}
+                  </button>
+                  <button
+                    className="ghost ghost--small"
+                    type="button"
+                    onClick={resetEmployeeForm}
+                  >
+                    Limpar
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Solicitacoes de folga</h3>
+                <span className="admin-pill">Admin</span>
+              </div>
+              <p>Ajuste o status das solicitacoes.</p>
+              <div className="timeoff-list">
+                {adminRequests.length ? (
+                  adminRequests.map((request) => {
+                    const employee = data.employees.find(
+                      (item) => item.id === request.userId
+                    );
+                    return (
+                      <div key={request.id} className="timeoff-item">
                         <div>
-                          <strong>{account.name}</strong>
-                          <span className="admin-link-text">
-                            {`${origin || ""}/?autologin=${account.token}`}
+                          <strong>{employee?.name ?? "Funcionario"}</strong>
+                          <span className="entry-note">
+                            {new Date(
+                              `${request.date}T00:00:00`
+                            ).toLocaleDateString("pt-BR")}
                           </span>
                         </div>
+                        <div className="timeoff-actions">
+                          <select
+                            value={request.status}
+                            onChange={(event) =>
+                              handleUpdateTimeOffStatus(
+                                request.id,
+                                event.target.value as TimeOffRequest["status"]
+                              )
+                            }
+                          >
+                            {Object.entries(timeOffLabels).map(([value, label]) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            className="ghost ghost--small"
+                            type="button"
+                            onClick={() => handleRemoveTimeOff(request.id)}
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <span className="entry-note">Sem solicitacoes.</span>
+                )}
+              </div>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Tarefas da empresa</h3>
+                <span className="admin-pill">Pontos</span>
+              </div>
+              <p>Gerencie tarefas e pontos.</p>
+              <div className="task-list">
+                {data.tasks.length ? (
+                  data.tasks.map((task) => (
+                    <div key={task.id} className="task-item">
+                      <div className="task-meta">
+                        <strong>{task.title}</strong>
+                        <span className="task-points">{task.points} pontos</span>
+                      </div>
+                      <div className="task-actions">
                         <button
                           className="ghost ghost--small"
                           type="button"
-                          onClick={() => handleCopyLink(account.token)}
+                          onClick={() => handleToggleTask(task.id)}
                         >
-                          {copiedToken === account.token ? "Copiado" : "Copiar"}
+                          {task.active ? "Desativar" : "Ativar"}
+                        </button>
+                        <button
+                          className="ghost ghost--small"
+                          type="button"
+                          onClick={() => handleRemoveTask(task.id)}
+                        >
+                          Remover
                         </button>
                       </div>
-                    ))}
-                  </div>
-                ) : null}
-
-                <div className="admin-payroll">
-                  <p className="admin-links-title">Pagamentos (admin)</p>
-                  {STAFF_PROFILES.filter((profile) => profile.pay).map((profile) => (
-                    <div key={profile.id} className="payroll-item">
-                      <div>
-                        <strong>{profile.name}</strong>
-                        <span className="payroll-meta">
-                          {profile.pay?.type === "daily" ? "Diaria" : "Mensal"}
-                        </span>
-                        {profile.pay?.note ? (
-                          <span className="payroll-note">{profile.pay.note}</span>
-                        ) : null}
-                      </div>
-                      <span className="payroll-amount">
-                        {formatCurrency(profile.pay?.amount ?? 0)}
-                        {profile.pay?.type === "daily" ? "/dia" : "/mes"}
-                      </span>
                     </div>
-                  ))}
+                  ))
+                ) : (
+                  <span className="entry-note">Nenhuma tarefa cadastrada.</span>
+                )}
+              </div>
+              <div className="task-form">
+                <div className="form-grid">
+                  <div>
+                    <label>Nova tarefa</label>
+                    <input
+                      type="text"
+                      value={taskForm.title}
+                      onChange={(event) =>
+                        setTaskForm((prev) => ({
+                          ...prev,
+                          title: event.target.value,
+                        }))
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label>Pontos</label>
+                    <input
+                      type="number"
+                      value={taskForm.points}
+                      onChange={(event) =>
+                        setTaskForm((prev) => ({
+                          ...prev,
+                          points: Number(event.target.value),
+                        }))
+                      }
+                    />
+                  </div>
                 </div>
-              </>
-            ) : (
-              <div className="admin-locked">Entre com uma conta admin.</div>
-            )}
-          </section>
+                <button
+                  className="action-btn"
+                  type="button"
+                  onClick={handleAddTask}
+                >
+                  Adicionar tarefa
+                </button>
+              </div>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Relatorios</h3>
+                <span className="admin-pill">Produtividade</span>
+              </div>
+              <p>Horas, atrasos, extras e pontos por periodo.</p>
+              <div className="report-list">
+                {reportRows.length ? (
+                  reportRows.map((row) => (
+                    <div key={row.id} className="report-card">
+                      <div className="report-head">
+                        <div>
+                          <strong>{row.name}</strong>
+                          <span className="entry-note">{row.role}</span>
+                        </div>
+                        <span className="status-pill pending">
+                          Atrasos {row.lateCount}
+                        </span>
+                      </div>
+                      <div className="report-metrics">
+                        <div className="metric">
+                          <span className="stat-label">Horas</span>
+                          <strong>{formatMinutes(row.totalMinutes)}</strong>
+                        </div>
+                        <div className="metric">
+                          <span className="stat-label">Dias</span>
+                          <strong>{row.daysWorked}</strong>
+                        </div>
+                        <div className="metric">
+                          <span className="stat-label">Extra</span>
+                          <strong>{formatMinutes(row.overtimeMinutes)}</strong>
+                        </div>
+                        <div className="metric">
+                          <span className="stat-label">Pontos</span>
+                          <strong>{row.points}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <span className="entry-note">
+                    Nenhum registro de ponto neste periodo.
+                  </span>
+                )}
+              </div>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Folha de pagamento</h3>
+                <span className="admin-pill">Admin</span>
+              </div>
+              <p>Valores visiveis apenas para o admin.</p>
+              <div className="admin-payroll">
+                {data.employees.filter((employee) => employee.pay).length ? (
+                  data.employees
+                    .filter((employee) => employee.pay)
+                    .map((employee) => (
+                      <div key={employee.id} className="payroll-item">
+                        <div>
+                          <strong>{employee.name}</strong>
+                          <span className="payroll-meta">
+                            {employee.pay?.type === "monthly" ? "Mensal" : "Diaria"}
+                          </span>
+                          {employee.pay?.note ? (
+                            <span className="payroll-note">{employee.pay.note}</span>
+                          ) : null}
+                        </div>
+                        <div className="payroll-amount">
+                          {employee.pay ? formatCurrency(employee.pay.amount) : "-"}
+                        </div>
+                      </div>
+                    ))
+                ) : (
+                  <span className="entry-note">Sem valores cadastrados.</span>
+                )}
+              </div>
+            </section>
+            </>
+          )}
         </div>
       </aside>
 
-      <main className="home" aria-label="Bater ponto">
-        <div className="clock-card" role="img" aria-label={`Agora ${timeString}`}>
+      <main className="home">
+        <div className="clock-card">
           <div className="clock-time">{timeString}</div>
           <div className="clock-date">{dateString}</div>
         </div>
-
         <button
           className="shift-button"
           type="button"
-          aria-pressed={shiftActive}
           data-active={shiftActive}
           onClick={handleShiftToggle}
-          disabled={!canPunch}
+          disabled={shiftButtonDisabled}
         >
-          {shiftActive ? "Finalizar turno" : "Iniciar turno"}
+          {shiftButtonLabel}
         </button>
-        {(!canPunch || shiftNotice) && (
-          <p
-            className={`shift-note ${
-              !canPunch ? "default" : shiftNoticeTone
-            }`}
-          >
-            {!canPunch ? "Conta sem ponto." : shiftNotice}
-          </p>
-        )}
+        {shiftNotice ? (
+          <span className={`shift-note ${shiftNoticeTone}`}>{shiftNotice}</span>
+        ) : shiftActive && openRecord ? (
+          <span className="shift-note">
+            Inicio: {new Date(openRecord.startAt).toLocaleTimeString("pt-BR", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
+        ) : null}
       </main>
     </div>
   );
