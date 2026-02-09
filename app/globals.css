@@ -1316,6 +1316,70 @@ select:focus-visible {
   gap: 10px;
 }
 
+.payment-summary {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.payment-summary-card {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(29, 28, 26, 0.05);
+  display: grid;
+  gap: 4px;
+}
+
+.payment-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.payment-form {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(29, 28, 26, 0.05);
+  display: grid;
+  gap: 10px;
+}
+
+.payment-form h4 {
+  font-size: 0.95rem;
+}
+
+.payment-list {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.payment-item {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border);
+  display: grid;
+  gap: 8px;
+}
+
+.payment-meta {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.payment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .status-banner {
   margin-top: 10px;
   padding: 10px 12px;

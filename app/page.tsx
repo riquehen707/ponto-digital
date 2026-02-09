@@ -65,6 +65,22 @@ type TimeOffRequest = {
   createdAt: string;
 };
 
+type PaymentStatus = "planned" | "paid";
+
+type PaymentKind = "salary" | "daily" | "bonus" | "adjustment";
+
+type PaymentRecord = {
+  id: string;
+  userId: string;
+  date: string;
+  amount: number;
+  method: string;
+  status: PaymentStatus;
+  kind: PaymentKind;
+  note?: string;
+  createdAt: string;
+};
+
 type PunchRecord = {
   id: string;
   userId: string;
@@ -96,6 +112,7 @@ type AppData = {
   tasks: Task[];
   completions: TaskCompletion[];
   timeOffRequests: TimeOffRequest[];
+  payments: PaymentRecord[];
   punchRecords: PunchRecord[];
 };
 
@@ -226,6 +243,7 @@ const DEFAULT_DATA: AppData = {
   tasks: DEFAULT_TASKS,
   completions: [],
   timeOffRequests: [],
+  payments: [],
   punchRecords: [],
 };
 
@@ -432,6 +450,15 @@ export default function Home() {
   const [exportNotice, setExportNotice] = useState("");
   const [importData, setImportData] = useState("");
   const [importError, setImportError] = useState("");
+  const [paymentForm, setPaymentForm] = useState({
+    userId: "",
+    date: getLocalDateKey(new Date()),
+    amount: 0,
+    method: "pix",
+    status: "planned" as PaymentStatus,
+    kind: "daily" as PaymentKind,
+    note: "",
+  });
   const [now, setNow] = useState(() => new Date());
 
   const watchIdRef = useRef<number | null>(null);
@@ -511,6 +538,7 @@ export default function Home() {
         timeOffRequests: Array.isArray(parsed.timeOffRequests)
           ? parsed.timeOffRequests
           : [],
+        payments: Array.isArray(parsed.payments) ? parsed.payments : [],
         punchRecords: Array.isArray(parsed.punchRecords) ? parsed.punchRecords : [],
       });
     } catch {
@@ -1240,6 +1268,60 @@ export default function Home() {
     return [header.join(";"), ...rows].join("\n");
   }, [reportRows]);
 
+  const paymentsInRange = useMemo(() => {
+    return data.payments.filter((payment) => {
+      const day = new Date(`${payment.date}T00:00:00`);
+      return day >= reportStart;
+    });
+  }, [data.payments, reportStart]);
+
+  const paymentsByUser = useMemo(() => {
+    const totals = new Map<
+      string,
+      { paid: number; planned: number; count: number }
+    >();
+    paymentsInRange.forEach((payment) => {
+      const entry = totals.get(payment.userId) ?? {
+        paid: 0,
+        planned: 0,
+        count: 0,
+      };
+      if (payment.status === "paid") {
+        entry.paid += payment.amount;
+      } else {
+        entry.planned += payment.amount;
+      }
+      entry.count += 1;
+      totals.set(payment.userId, entry);
+    });
+    return totals;
+  }, [paymentsInRange]);
+
+  const paymentsCsv = useMemo(() => {
+    const header = [
+      "nome",
+      "data",
+      "tipo",
+      "status",
+      "valor",
+      "metodo",
+      "nota",
+    ];
+    const rows = paymentsInRange.map((payment) => {
+      const employee = data.employees.find((item) => item.id === payment.userId);
+      return [
+        escapeCsv(employee?.name ?? "Funcionario"),
+        payment.date,
+        payment.kind,
+        payment.status,
+        payment.amount,
+        escapeCsv(payment.method),
+        escapeCsv(payment.note ?? ""),
+      ].join(";");
+    });
+    return [header.join(";"), ...rows].join("\n");
+  }, [paymentsInRange, data.employees]);
+
   const currentMetrics = useMemo(() => {
     if (!currentUser) {
       return null;
@@ -1414,6 +1496,7 @@ export default function Home() {
         timeOffRequests: Array.isArray(incoming.timeOffRequests)
           ? incoming.timeOffRequests
           : [],
+        payments: Array.isArray(incoming.payments) ? incoming.payments : [],
         punchRecords: Array.isArray(incoming.punchRecords) ? incoming.punchRecords : [],
       });
       setImportData("");
@@ -1422,6 +1505,54 @@ export default function Home() {
     } catch (error) {
       setImportError("Erro ao importar. Verifique o JSON.");
     }
+  };
+
+  const handleAddPayment = () => {
+    if (!paymentForm.userId || !paymentForm.date || !paymentForm.amount) {
+      return;
+    }
+    const record: PaymentRecord = {
+      id: `pay_${Date.now()}`,
+      userId: paymentForm.userId,
+      date: paymentForm.date,
+      amount: Number(paymentForm.amount),
+      method: paymentForm.method.trim() || "pix",
+      status: paymentForm.status,
+      kind: paymentForm.kind,
+      note: paymentForm.note.trim() || undefined,
+      createdAt: new Date().toISOString(),
+    };
+    setData((prev) => ({
+      ...prev,
+      payments: [record, ...prev.payments],
+    }));
+    setPaymentForm((prev) => ({
+      ...prev,
+      amount: 0,
+      note: "",
+      status: "planned",
+    }));
+  };
+
+  const handleTogglePaymentStatus = (id: string) => {
+    setData((prev) => ({
+      ...prev,
+      payments: prev.payments.map((payment) =>
+        payment.id === id
+          ? {
+              ...payment,
+              status: payment.status === "paid" ? "planned" : "paid",
+            }
+          : payment
+      ),
+    }));
+  };
+
+  const handleRemovePayment = (id: string) => {
+    setData((prev) => ({
+      ...prev,
+      payments: prev.payments.filter((payment) => payment.id !== id),
+    }));
   };
 
   if (!currentUser) {
@@ -2645,6 +2776,18 @@ export default function Home() {
                 <button className="action-btn" type="button" onClick={handleExportCsv}>
                   Exportar CSV
                 </button>
+                <button
+                  className="action-btn"
+                  type="button"
+                  onClick={() => {
+                    setExportData(paymentsCsv);
+                    setExportLabel("CSV");
+                    setExportNotice("Export de pagamentos pronto.");
+                    setImportError("");
+                  }}
+                >
+                  Export pagamentos
+                </button>
               </div>
               {exportNotice ? (
                 <div className="status-banner success">{exportNotice}</div>
@@ -2730,6 +2873,206 @@ export default function Home() {
                     ))
                 ) : (
                   <span className="entry-note">Sem valores cadastrados.</span>
+                )}
+              </div>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Pagamentos</h3>
+                <span className="admin-pill">Financeiro</span>
+              </div>
+              <p>Registre pagamentos, bonus e ajustes.</p>
+              <div className="payment-summary">
+                {data.employees
+                  .filter((employee) => employee.role !== "admin")
+                  .map((employee) => {
+                    const totals = paymentsByUser.get(employee.id) ?? {
+                      paid: 0,
+                      planned: 0,
+                      count: 0,
+                    };
+                    return (
+                      <div key={employee.id} className="payment-summary-card">
+                        <strong>{employee.name}</strong>
+                        <span className="entry-note">
+                          Lancamentos: {totals.count}
+                        </span>
+                        <div className="payment-values">
+                          <span>Pago {formatCurrency(totals.paid)}</span>
+                          <span>Previsto {formatCurrency(totals.planned)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+
+              <div className="payment-form">
+                <h4>Novo pagamento</h4>
+                <div className="form-grid">
+                  <div>
+                    <label>Funcionario</label>
+                    <select
+                      value={paymentForm.userId}
+                      onChange={(event) =>
+                        setPaymentForm((prev) => ({
+                          ...prev,
+                          userId: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">Selecionar</option>
+                      {data.employees
+                        .filter((employee) => employee.role !== "admin")
+                        .map((employee) => (
+                          <option key={employee.id} value={employee.id}>
+                            {employee.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Data</label>
+                      <input
+                        type="date"
+                        value={paymentForm.date}
+                        onChange={(event) =>
+                          setPaymentForm((prev) => ({
+                            ...prev,
+                            date: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Valor</label>
+                      <input
+                        type="number"
+                        value={paymentForm.amount}
+                        onChange={(event) =>
+                          setPaymentForm((prev) => ({
+                            ...prev,
+                            amount: Number(event.target.value),
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Tipo</label>
+                      <select
+                        value={paymentForm.kind}
+                        onChange={(event) =>
+                          setPaymentForm((prev) => ({
+                            ...prev,
+                            kind: event.target.value as PaymentKind,
+                          }))
+                        }
+                      >
+                        <option value="daily">Diaria</option>
+                        <option value="salary">Mensal</option>
+                        <option value="bonus">Bonus</option>
+                        <option value="adjustment">Ajuste</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label>Status</label>
+                      <select
+                        value={paymentForm.status}
+                        onChange={(event) =>
+                          setPaymentForm((prev) => ({
+                            ...prev,
+                            status: event.target.value as PaymentStatus,
+                          }))
+                        }
+                      >
+                        <option value="planned">Previsto</option>
+                        <option value="paid">Pago</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Metodo</label>
+                      <input
+                        type="text"
+                        value={paymentForm.method}
+                        onChange={(event) =>
+                          setPaymentForm((prev) => ({
+                            ...prev,
+                            method: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Nota</label>
+                      <input
+                        type="text"
+                        value={paymentForm.note}
+                        onChange={(event) =>
+                          setPaymentForm((prev) => ({
+                            ...prev,
+                            note: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+                <button className="action-btn" type="button" onClick={handleAddPayment}>
+                  Registrar pagamento
+                </button>
+              </div>
+
+              <div className="payment-list">
+                {data.payments.length ? (
+                  data.payments.slice(0, 12).map((payment) => {
+                    const employee = data.employees.find(
+                      (item) => item.id === payment.userId
+                    );
+                    return (
+                      <div key={payment.id} className="payment-item">
+                        <div>
+                          <strong>{employee?.name ?? "Funcionario"}</strong>
+                          <span className="payment-meta">
+                            {payment.date} - {payment.kind} - {payment.method}
+                          </span>
+                          {payment.note ? (
+                            <span className="payment-meta">{payment.note}</span>
+                          ) : null}
+                        </div>
+                        <div className="payment-actions">
+                          <span
+                            className={`status-pill ${
+                              payment.status === "paid" ? "approved" : "pending"
+                            }`}
+                          >
+                            {payment.status === "paid" ? "Pago" : "Previsto"}
+                          </span>
+                          <strong>{formatCurrency(payment.amount)}</strong>
+                          <button
+                            className="ghost ghost--small"
+                            type="button"
+                            onClick={() => handleTogglePaymentStatus(payment.id)}
+                          >
+                            {payment.status === "paid" ? "Marcar previsto" : "Marcar pago"}
+                          </button>
+                          <button
+                            className="ghost ghost--small"
+                            type="button"
+                            onClick={() => handleRemovePayment(payment.id)}
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <span className="entry-note">Sem pagamentos registrados.</span>
                 )}
               </div>
             </section>
