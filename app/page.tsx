@@ -251,6 +251,16 @@ const isSameDay = (a: Date, b: Date) =>
   a.getMonth() === b.getMonth() &&
   a.getDate() === b.getDate();
 
+const getLocalDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};
+
+const getStartOfDay = (date: Date) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
 const toRadians = (value: number) => (value * Math.PI) / 180;
 
 const getDistanceMeters = (
@@ -417,6 +427,11 @@ export default function Home() {
   const [employeeMode, setEmployeeMode] = useState<"new" | "edit">("new");
   const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
   const [copiedToken, setCopiedToken] = useState("");
+  const [exportData, setExportData] = useState("");
+  const [exportLabel, setExportLabel] = useState<"JSON" | "CSV" | "">("");
+  const [exportNotice, setExportNotice] = useState("");
+  const [importData, setImportData] = useState("");
+  const [importError, setImportError] = useState("");
   const [now, setNow] = useState(() => new Date());
 
   const watchIdRef = useRef<number | null>(null);
@@ -988,10 +1003,7 @@ export default function Home() {
     return map;
   }, [data.timeOffRequests, currentUserId]);
 
-  const selectedDateKey = useMemo(
-    () => selectedDate.toISOString().split("T")[0],
-    [selectedDate]
-  );
+  const selectedDateKey = useMemo(() => getLocalDateKey(selectedDate), [selectedDate]);
 
   const selectedRequest = currentUserId
     ? requestMap.get(selectedDateKey) ?? null
@@ -1026,7 +1038,7 @@ export default function Home() {
     for (let i = 0; i < 42; i += 1) {
       const date = new Date(gridStart);
       date.setDate(gridStart.getDate() + i);
-      const key = date.toISOString().split("T")[0];
+      const key = getLocalDateKey(date);
       const inMonth = date.getMonth() === viewMonth.getMonth();
       const isToday = isSameDay(date, now);
       const isSelected = isSameDay(date, selectedDate);
@@ -1196,12 +1208,64 @@ export default function Home() {
     [data.employees, data.punchRecords, data.settings, reportStart, pointsByUser]
   );
 
+  const escapeCsv = (value: string | number) => {
+    const text = String(value ?? "");
+    if (/[\";\n]/.test(text)) {
+      return `"${text.replace(/\"/g, '""')}"`;
+    }
+    return text;
+  };
+
+  const reportCsv = useMemo(() => {
+    const header = [
+      "nome",
+      "funcao",
+      "dias",
+      "minutos",
+      "atrasos",
+      "extra_min",
+      "pontos",
+    ];
+    const rows = reportRows.map((row) =>
+      [
+        escapeCsv(row.name),
+        escapeCsv(row.role),
+        row.daysWorked,
+        Math.round(row.totalMinutes),
+        row.lateCount,
+        Math.round(row.overtimeMinutes),
+        row.points,
+      ].join(";")
+    );
+    return [header.join(";"), ...rows].join("\n");
+  }, [reportRows]);
+
   const currentMetrics = useMemo(() => {
     if (!currentUser) {
       return null;
     }
     return reportRows.find((row) => row.id === currentUser.id) ?? null;
   }, [currentUser, reportRows]);
+
+  const openShifts = useMemo(() => {
+    return data.punchRecords
+      .filter((record) => !record.endAt)
+      .map((record) => {
+        const employee = data.employees.find((item) => item.id === record.userId);
+        const startedAt = new Date(record.startAt);
+        const durationMinutes = Math.max(
+          0,
+          (now.getTime() - startedAt.getTime()) / 60000
+        );
+        return {
+          id: record.id,
+          name: employee?.name ?? "Funcionario",
+          startedAt,
+          durationMinutes,
+        };
+      })
+      .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime());
+  }, [data.punchRecords, data.employees, now]);
 
   const pendingRequests = useMemo(
     () =>
@@ -1228,6 +1292,9 @@ export default function Home() {
 
   const handleToggleTimeOff = () => {
     if (!currentUserId) {
+      return;
+    }
+    if (getStartOfDay(selectedDate) < getStartOfDay(now)) {
       return;
     }
     const existing = requestMap.get(selectedDateKey);
@@ -1277,6 +1344,86 @@ export default function Home() {
     }));
   };
 
+  const buildExportPayload = () => ({
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    data,
+  });
+
+  const handleExportJson = () => {
+    const payload = JSON.stringify(buildExportPayload(), null, 2);
+    setExportData(payload);
+    setExportLabel("JSON");
+    setExportNotice("Export JSON pronto.");
+    setImportError("");
+  };
+
+  const handleExportCsv = () => {
+    setExportData(reportCsv);
+    setExportLabel("CSV");
+    setExportNotice("Export CSV pronto.");
+    setImportError("");
+  };
+
+  const handleCopyExport = async () => {
+    if (!exportData || typeof navigator === "undefined") {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(exportData);
+      setExportNotice("Export copiado.");
+    } catch {
+      setExportNotice("Nao foi possivel copiar.");
+    }
+  };
+
+  const handleDownloadExport = () => {
+    if (!exportData || typeof window === "undefined") {
+      return;
+    }
+    const ext = exportLabel === "CSV" ? "csv" : "json";
+    const mime =
+      exportLabel === "CSV" ? "text/csv;charset=utf-8" : "application/json;charset=utf-8";
+    const blob = new Blob([exportData], { type: mime });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `ponto-vivo-export-${getLocalDateKey(new Date())}.${ext}`;
+    anchor.click();
+    window.URL.revokeObjectURL(url);
+    setExportNotice("Arquivo gerado.");
+  };
+
+  const handleImportData = () => {
+    if (!importData.trim()) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(importData) as Partial<AppData> & {
+        data?: Partial<AppData>;
+      };
+      const incoming = parsed.data ?? parsed;
+      if (!incoming.employees || !Array.isArray(incoming.employees)) {
+        throw new Error("Formato invalido");
+      }
+      setData({
+        employees: incoming.employees,
+        settings: { ...DEFAULT_SETTINGS, ...(incoming.settings ?? {}) },
+        tasks: Array.isArray(incoming.tasks) ? incoming.tasks : DEFAULT_DATA.tasks,
+        completions: Array.isArray(incoming.completions) ? incoming.completions : [],
+        timeOffRequests: Array.isArray(incoming.timeOffRequests)
+          ? incoming.timeOffRequests
+          : [],
+        punchRecords: Array.isArray(incoming.punchRecords) ? incoming.punchRecords : [],
+      });
+      setImportData("");
+      setImportError("");
+      setExportNotice("Importacao concluida.");
+    } catch (error) {
+      setImportError("Erro ao importar. Verifique o JSON.");
+    }
+  };
+
   if (!currentUser) {
     return (
       <div className="login-shell">
@@ -1319,6 +1466,8 @@ export default function Home() {
     data.employees,
     data.settings
   );
+
+  const isPastDate = getStartOfDay(selectedDate) < getStartOfDay(now);
 
   const shiftButtonLabel = shiftActive ? "Finalizar turno" : "Iniciar turno";
   const shiftButtonDisabled = !canPunch;
@@ -1506,6 +1655,7 @@ export default function Home() {
               onClick={handleToggleTimeOff}
               disabled={
                 !canPunch ||
+                isPastDate ||
                 (selectedRequest ? selectedRequest.status !== "pending" : false)
               }
             >
@@ -1518,6 +1668,10 @@ export default function Home() {
             {!canPunch ? (
               <span className="entry-note">
                 Esta conta nao possui ponto nem solicitacao de folga.
+              </span>
+            ) : isPastDate ? (
+              <span className="entry-note">
+                Nao e possivel solicitar folga para dias passados.
               </span>
             ) : null}
             <div className="timeoff-list">
@@ -1820,6 +1974,45 @@ export default function Home() {
                     </button>
                   </div>
                 ))}
+              </div>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Monitoramento</h3>
+                <span className="admin-pill">Ao vivo</span>
+              </div>
+              <p>Turnos ativos e duracao.</p>
+              <div className="report-list">
+                {openShifts.length ? (
+                  openShifts.map((shift) => (
+                    <div key={shift.id} className="report-card">
+                      <div className="report-head">
+                        <div>
+                          <strong>{shift.name}</strong>
+                          <span className="entry-note">
+                            Inicio {shift.startedAt.toLocaleTimeString("pt-BR")}
+                          </span>
+                        </div>
+                        <span className="status-pill approved">Em turno</span>
+                      </div>
+                      <div className="report-metrics">
+                        <div className="metric">
+                          <span className="stat-label">Duracao</span>
+                          <strong>{formatMinutes(shift.durationMinutes)}</strong>
+                        </div>
+                        <div className="metric">
+                          <span className="stat-label">Inicio</span>
+                          <strong>
+                            {shift.startedAt.toLocaleDateString("pt-BR")}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <span className="entry-note">Nenhum turno ativo.</span>
+                )}
               </div>
             </section>
 
@@ -2436,6 +2629,76 @@ export default function Home() {
                     Nenhum registro de ponto neste periodo.
                   </span>
                 )}
+              </div>
+            </section>
+
+            <section className="tool-card admin-card">
+              <div className="admin-header">
+                <h3>Integracoes</h3>
+                <span className="admin-pill">Exportacao</span>
+              </div>
+              <p>Exporte dados para outros sistemas ou importe ajustes.</p>
+              <div className="action-grid">
+                <button className="action-btn" type="button" onClick={handleExportJson}>
+                  Exportar JSON
+                </button>
+                <button className="action-btn" type="button" onClick={handleExportCsv}>
+                  Exportar CSV
+                </button>
+              </div>
+              {exportNotice ? (
+                <div className="status-banner success">{exportNotice}</div>
+              ) : null}
+              {exportData ? (
+                <div className="export-box">
+                  <div className="export-head">
+                    <strong>{exportLabel || "Export"}</strong>
+                    <div className="export-actions">
+                      <button
+                        className="ghost ghost--small"
+                        type="button"
+                        onClick={handleCopyExport}
+                      >
+                        Copiar
+                      </button>
+                      <button
+                        className="ghost ghost--small"
+                        type="button"
+                        onClick={handleDownloadExport}
+                      >
+                        Baixar
+                      </button>
+                    </div>
+                  </div>
+                  <textarea className="code-area" readOnly value={exportData} />
+                </div>
+              ) : null}
+              <div className="import-box">
+                <label>Importar JSON</label>
+                <textarea
+                  className="code-area"
+                  placeholder="Cole aqui o JSON exportado"
+                  value={importData}
+                  onChange={(event) => setImportData(event.target.value)}
+                />
+                <div className="action-grid">
+                  <button className="action-btn" type="button" onClick={handleImportData}>
+                    Importar dados
+                  </button>
+                  <button
+                    className="ghost ghost--small"
+                    type="button"
+                    onClick={() => {
+                      setImportData("");
+                      setImportError("");
+                    }}
+                  >
+                    Limpar
+                  </button>
+                </div>
+                {importError ? (
+                  <div className="status-banner error">{importError}</div>
+                ) : null}
               </div>
             </section>
 

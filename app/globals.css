@@ -1316,6 +1316,55 @@ select:focus-visible {
   gap: 10px;
 }
 
+.status-banner {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  background: rgba(47, 72, 88, 0.12);
+  color: #2f4858;
+}
+
+.status-banner.error {
+  background: rgba(178, 74, 74, 0.18);
+  color: #7d3535;
+}
+
+.export-box,
+.import-box {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(29, 28, 26, 0.05);
+}
+
+.export-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.export-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.code-area {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-family: "Sora", "Segoe UI", sans-serif;
+  font-size: 0.78rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--ink);
+}
+
 @media (max-width: 520px) {
   .task-summary {
     flex-direction: column;
