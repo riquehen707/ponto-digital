@@ -308,6 +308,27 @@ select:focus-visible {
   font-size: 0.9rem;
 }
 
+.menu-org {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.menu-org label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.menu-org select {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.9);
+  font-size: 0.85rem;
+}
+
 .menu-close {
   padding: 6px 12px;
   border-radius: 999px;
@@ -1257,6 +1278,26 @@ select:focus-visible {
   font-size: 0.95rem;
 }
 
+.employee-search {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.employee-search label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.employee-search input {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
 .workday-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -1390,6 +1431,26 @@ select:focus-visible {
 
 .payment-form h4 {
   font-size: 0.95rem;
+}
+
+.payment-filter {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.payment-filter label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.payment-filter select {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .payment-list {
