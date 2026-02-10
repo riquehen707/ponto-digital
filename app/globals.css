@@ -301,6 +301,11 @@ select:focus-visible {
   flex-wrap: wrap;
 }
 
+.admin-sync-error {
+  font-size: 0.78rem;
+  color: #b24a4a;
+}
+
 .menu-overlay {
   position: fixed;
   inset: 0;

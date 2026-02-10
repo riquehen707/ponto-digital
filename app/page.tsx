@@ -114,6 +114,7 @@ export default function Home() {
     "idle"
   );
   const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
+  const [syncError, setSyncError] = useState("");
   const [now, setNow] = useState(() => new Date());
 
   const watchIdRef = useRef<number | null>(null);
@@ -235,6 +236,7 @@ export default function Home() {
       skipNextPushRef.current = true;
       setData(normalizeAppData(payload));
       setSyncStatus("synced");
+      setSyncError("");
       updateSyncStamp(updatedAt);
     },
     [normalizeAppData, updateSyncStamp]
@@ -253,19 +255,21 @@ export default function Home() {
       }
       if (!navigator.onLine) {
         if (mode === "manual") {
-          setSyncStatus("error");
+          setSyncStatus("idle");
+          setSyncError("Sem conexao com a internet.");
         }
         return;
       }
       if (mode === "manual") {
         setSyncStatus("syncing");
+        setSyncError("");
       }
       const task = (async () => {
         const response = await fetch(`/api/state?key=${APP_STATE_KEY}`, {
           cache: "no-store",
         });
         if (!response.ok) {
-          throw new Error("Erro ao carregar");
+          throw new Error(`Erro ${response.status} ao carregar dados.`);
         }
         const payload = (await response.json()) as {
           data?: Partial<AppData>;
@@ -294,6 +298,7 @@ export default function Home() {
       } catch {
         if (mode === "manual") {
           setSyncStatus("error");
+          setSyncError("Falha ao carregar. Tente novamente.");
         }
       } finally {
         syncFetchRef.current = null;
@@ -418,10 +423,12 @@ export default function Home() {
       return;
     }
     if (!navigator.onLine) {
-      setSyncStatus("error");
+      setSyncStatus("idle");
+      setSyncError("Sem conexao com a internet.");
       return;
     }
     setSyncStatus("syncing");
+    setSyncError("");
     saveTimeoutRef.current = window.setTimeout(async () => {
       try {
         const response = await fetch("/api/state", {
@@ -430,13 +437,14 @@ export default function Home() {
           body: JSON.stringify({ key: APP_STATE_KEY, data }),
         });
         if (!response.ok) {
-          throw new Error("Erro ao salvar");
+          throw new Error(`Erro ${response.status} ao salvar dados.`);
         }
         const payload = (await response.json()) as { updatedAt?: string };
         setSyncStatus("synced");
         updateSyncStamp(payload.updatedAt);
       } catch {
         setSyncStatus("error");
+        setSyncError("Falha ao salvar. Verifique a conexao.");
       }
     }, 900);
   }, [data, dataLoaded]);
@@ -1744,10 +1752,12 @@ export default function Home() {
       return;
     }
     if (!navigator.onLine) {
-      setSyncStatus("error");
+      setSyncStatus("idle");
+      setSyncError("Sem conexao com a internet.");
       return;
     }
     setSyncStatus("syncing");
+    setSyncError("");
     try {
       const response = await fetch("/api/state", {
         method: "POST",
@@ -1755,13 +1765,14 @@ export default function Home() {
         body: JSON.stringify({ key: APP_STATE_KEY, data }),
       });
       if (!response.ok) {
-        throw new Error("Erro ao salvar");
+        throw new Error(`Erro ${response.status} ao salvar dados.`);
       }
       const payload = (await response.json()) as { updatedAt?: string };
       setSyncStatus("synced");
       updateSyncStamp(payload.updatedAt);
     } catch {
       setSyncStatus("error");
+      setSyncError("Falha ao inicializar. Verifique o servidor.");
     }
   };
 
@@ -3743,6 +3754,7 @@ export default function Home() {
         <AdminSyncBar
           syncStatus={syncStatus}
           lastSyncAt={lastSyncAt}
+          errorMessage={syncError}
           onSyncNow={handleSyncNow}
           onForceSave={handleForceSave}
         />

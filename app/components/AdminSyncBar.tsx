@@ -1,6 +1,7 @@
 type AdminSyncBarProps = {
   syncStatus: "idle" | "syncing" | "synced" | "error";
   lastSyncAt: Date | null;
+  errorMessage?: string;
   onSyncNow: () => void;
   onForceSave: () => void;
 };
@@ -22,6 +23,7 @@ const STATUS_CLASS: Record<AdminSyncBarProps["syncStatus"], string> = {
 export default function AdminSyncBar({
   syncStatus,
   lastSyncAt,
+  errorMessage,
   onSyncNow,
   onForceSave,
 }: AdminSyncBarProps) {
@@ -46,6 +48,7 @@ export default function AdminSyncBar({
           Inicializar banco
         </button>
       </div>
+      {errorMessage ? <div className="admin-sync-error">{errorMessage}</div> : null}
     </div>
   );
 }
