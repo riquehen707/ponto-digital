@@ -1292,7 +1292,7 @@ export default function Home() {
 
   const computeMetrics = (employee: Employee) => {
     const records = (activeOrg?.punchRecords ?? []).filter(
-      (record) => record.userId === employee.id && record.endAt
+      (record) => record.userId === employee.id
     );
     const dayBuckets = new Map<
       string,
@@ -1304,10 +1304,7 @@ export default function Home() {
       if (start < reportStart) {
         return;
       }
-      if (!record.endAt) {
-        return;
-      }
-      const end = new Date(record.endAt);
+      const end = record.endAt ? new Date(record.endAt) : now;
       const duration = Math.max(0, (end.getTime() - start.getTime()) / 60000);
       const dayKey = getLocalDateKey(start);
       const entry = dayBuckets.get(dayKey);
@@ -1382,7 +1379,7 @@ export default function Home() {
             points: pointsByUser.get(employee.id) ?? 0,
           };
         }),
-    [activeOrg, reportStart, pointsByUser, attendanceByUser]
+    [activeOrg, reportStart, pointsByUser, attendanceByUser, now]
   );
 
   const employeeSearchTerm = employeeSearch.trim().toLowerCase();
@@ -2375,6 +2372,13 @@ export default function Home() {
                       (employee) => employee.role !== "admin"
                     ).length}
                   </span>
+                </div>
+              ) : null}
+              {isAdmin ? (
+                <div className="stat">
+                  <span className="stat-label">Equipe online</span>
+                  <span className="stat-value">{openShifts.length}</span>
+                  <span className="stat-note">Turnos ativos agora</span>
                 </div>
               ) : null}
             </div>
