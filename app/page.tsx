@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HomeClock from "./components/HomeClock";
 import LoginScreen from "./components/LoginScreen";
+import AdminSyncBar from "./components/AdminSyncBar";
 import {
   type GeoStatus,
   type GeoInfo,
@@ -1738,6 +1739,32 @@ export default function Home() {
     await pullRemoteData("manual");
   };
 
+  const handleForceSave = async () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!navigator.onLine) {
+      setSyncStatus("error");
+      return;
+    }
+    setSyncStatus("syncing");
+    try {
+      const response = await fetch("/api/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: APP_STATE_KEY, data }),
+      });
+      if (!response.ok) {
+        throw new Error("Erro ao salvar");
+      }
+      const payload = (await response.json()) as { updatedAt?: string };
+      setSyncStatus("synced");
+      updateSyncStamp(payload.updatedAt);
+    } catch {
+      setSyncStatus("error");
+    }
+  };
+
   const handleAddPayment = () => {
     if (!paymentForm.userId || !paymentForm.date || !paymentForm.amount || !activeOrgId) {
       return;
@@ -3357,6 +3384,9 @@ export default function Home() {
                 </button>
               </div>
               <div className="action-grid">
+                <button className="action-btn" type="button" onClick={handleForceSave}>
+                  Inicializar banco
+                </button>
                 <button className="action-btn" type="button" onClick={handleExportJson}>
                   Exportar JSON
                 </button>
@@ -3708,6 +3738,15 @@ export default function Home() {
           )}
         </div>
       </aside>
+
+      {isAdmin ? (
+        <AdminSyncBar
+          syncStatus={syncStatus}
+          lastSyncAt={lastSyncAt}
+          onSyncNow={handleSyncNow}
+          onForceSave={handleForceSave}
+        />
+      ) : null}
 
       <HomeClock
         timeString={timeString}
