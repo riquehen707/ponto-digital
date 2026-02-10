@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HomeClock from "./components/HomeClock";
 import LoginScreen from "./components/LoginScreen";
 import {
@@ -118,6 +118,10 @@ export default function Home() {
   const watchIdRef = useRef<number | null>(null);
   const shiftActiveRef = useRef(false);
   const saveTimeoutRef = useRef<number | null>(null);
+  const skipNextPushRef = useRef(false);
+  const lastSyncRef = useRef<Date | null>(null);
+  const syncStatusRef = useRef(syncStatus);
+  const syncFetchRef = useRef<Promise<void> | null>(null);
 
   const activeOrgId =
     session?.type === "staff"
@@ -165,7 +169,8 @@ export default function Home() {
 
   const shiftActive = Boolean(openRecord);
 
-  const normalizeAppData = (
+  const normalizeAppData = useCallback(
+    (
     parsed: Partial<AppData> & {
       employees?: Employee[];
       settings?: Settings;
@@ -176,50 +181,134 @@ export default function Home() {
       punchRecords?: PunchRecord[];
     }
   ): AppData => {
-    if (Array.isArray(parsed.organizations)) {
-      const organizations = parsed.organizations.map((org, index) =>
-        normalizeOrg(org, `org-${index + 1}`, `Empresa ${index + 1}`)
-      );
-      return {
-        adminUsers: Array.isArray(parsed.adminUsers)
-          ? parsed.adminUsers
-          : DEFAULT_DATA.adminUsers,
-        organizations: organizations.length ? organizations : DEFAULT_DATA.organizations,
-        currentOrgId:
-          parsed.currentOrgId ??
-          organizations[0]?.id ??
-          DEFAULT_DATA.currentOrgId,
-      };
-    }
+      if (Array.isArray(parsed.organizations)) {
+        const organizations = parsed.organizations.map((org, index) =>
+          normalizeOrg(org, `org-${index + 1}`, `Empresa ${index + 1}`)
+        );
+        return {
+          adminUsers: Array.isArray(parsed.adminUsers)
+            ? parsed.adminUsers
+            : DEFAULT_DATA.adminUsers,
+          organizations: organizations.length ? organizations : DEFAULT_DATA.organizations,
+          currentOrgId:
+            parsed.currentOrgId ??
+            organizations[0]?.id ??
+            DEFAULT_DATA.currentOrgId,
+        };
+      }
 
-    if (Array.isArray(parsed.employees)) {
-      const org = normalizeOrg(
-        {
-          employees: parsed.employees,
-          settings: parsed.settings,
-          tasks: parsed.tasks,
-          completions: parsed.completions,
-          timeOffRequests: parsed.timeOffRequests,
-          payments: parsed.payments,
-          punchRecords: parsed.punchRecords,
-        },
-        "org-principal",
-        "Empresa Principal"
-      );
-      return {
-        adminUsers: DEFAULT_DATA.adminUsers,
-        organizations: [org],
-        currentOrgId: org.id,
-      };
-    }
+      if (Array.isArray(parsed.employees)) {
+        const org = normalizeOrg(
+          {
+            employees: parsed.employees,
+            settings: parsed.settings,
+            tasks: parsed.tasks,
+            completions: parsed.completions,
+            timeOffRequests: parsed.timeOffRequests,
+            payments: parsed.payments,
+            punchRecords: parsed.punchRecords,
+          },
+          "org-principal",
+          "Empresa Principal"
+        );
+        return {
+          adminUsers: DEFAULT_DATA.adminUsers,
+          organizations: [org],
+          currentOrgId: org.id,
+        };
+      }
 
-    return DEFAULT_DATA;
-  };
+      return DEFAULT_DATA;
+    },
+    []
+  );
+
+  const updateSyncStamp = useCallback((stamp?: string) => {
+    const next = stamp ? new Date(stamp) : new Date();
+    lastSyncRef.current = next;
+    setLastSyncAt(next);
+  }, []);
+
+  const applyRemoteData = useCallback(
+    (payload: Partial<AppData>, updatedAt?: string) => {
+      skipNextPushRef.current = true;
+      setData(normalizeAppData(payload));
+      setSyncStatus("synced");
+      updateSyncStamp(updatedAt);
+    },
+    [normalizeAppData, updateSyncStamp]
+  );
+
+  const pullRemoteData = useCallback(
+    async (mode: "auto" | "manual") => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      if (syncFetchRef.current) {
+        return;
+      }
+      if (syncStatusRef.current === "syncing") {
+        return;
+      }
+      if (!navigator.onLine) {
+        if (mode === "manual") {
+          setSyncStatus("error");
+        }
+        return;
+      }
+      if (mode === "manual") {
+        setSyncStatus("syncing");
+      }
+      const task = (async () => {
+        const response = await fetch(`/api/state?key=${APP_STATE_KEY}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error("Erro ao carregar");
+        }
+        const payload = (await response.json()) as {
+          data?: Partial<AppData>;
+          updatedAt?: string;
+        };
+        if (!payload?.data) {
+          if (mode === "manual") {
+            setSyncStatus("synced");
+          }
+          return;
+        }
+        const remoteStamp = payload.updatedAt ? new Date(payload.updatedAt) : new Date();
+        const lastStamp = lastSyncRef.current;
+        if (!lastStamp || remoteStamp > lastStamp) {
+          applyRemoteData(payload.data, payload.updatedAt);
+          return;
+        }
+        if (mode === "manual") {
+          setSyncStatus("synced");
+          updateSyncStamp(payload.updatedAt);
+        }
+      })();
+      syncFetchRef.current = task;
+      try {
+        await task;
+      } catch {
+        if (mode === "manual") {
+          setSyncStatus("error");
+        }
+      } finally {
+        syncFetchRef.current = null;
+      }
+    },
+    [applyRemoteData, updateSyncStamp]
+  );
 
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    syncStatusRef.current = syncStatus;
+  }, [syncStatus]);
 
   useEffect(() => {
     shiftActiveRef.current = shiftActive;
@@ -289,11 +378,12 @@ export default function Home() {
           updatedAt?: string;
         };
         if (payload?.data) {
-          setData(normalizeAppData(payload.data));
-          setSyncStatus("synced");
-          setLastSyncAt(payload.updatedAt ? new Date(payload.updatedAt) : new Date());
+          applyRemoteData(payload.data, payload.updatedAt);
         } else if (!localData) {
           setData(DEFAULT_DATA);
+          setSyncStatus("synced");
+        } else {
+          setSyncStatus("synced");
         }
       } catch {
         if (!localData) {
@@ -318,13 +408,17 @@ export default function Home() {
     if (!dataLoaded || typeof window === "undefined") {
       return;
     }
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+    }
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    if (skipNextPushRef.current) {
+      skipNextPushRef.current = false;
+      return;
+    }
     if (!navigator.onLine) {
       setSyncStatus("error");
       return;
-    }
-    if (saveTimeoutRef.current) {
-      window.clearTimeout(saveTimeoutRef.current);
     }
     setSyncStatus("syncing");
     saveTimeoutRef.current = window.setTimeout(async () => {
@@ -339,12 +433,26 @@ export default function Home() {
         }
         const payload = (await response.json()) as { updatedAt?: string };
         setSyncStatus("synced");
-        setLastSyncAt(payload.updatedAt ? new Date(payload.updatedAt) : new Date());
+        updateSyncStamp(payload.updatedAt);
       } catch {
         setSyncStatus("error");
       }
     }, 900);
   }, [data, dataLoaded]);
+
+  useEffect(() => {
+    if (!dataLoaded || typeof window === "undefined") {
+      return;
+    }
+    const intervalMs = isAdmin ? 15000 : 30000;
+    const interval = window.setInterval(() => {
+      if (document.hidden) {
+        return;
+      }
+      void pullRemoteData("auto");
+    }, intervalMs);
+    return () => window.clearInterval(interval);
+  }, [dataLoaded, isAdmin, pullRemoteData]);
 
   useEffect(() => {
     if (!dataLoaded || typeof window === "undefined") {
@@ -1101,6 +1209,80 @@ export default function Home() {
     return totals;
   }, [activeOrg, tasksById, reportStart]);
 
+  const todayKey = getLocalDateKey(now);
+  const rangeDays = useMemo(() => {
+    const days: { key: string; weekday: number }[] = [];
+    const cursor = new Date(reportStart);
+    cursor.setHours(0, 0, 0, 0);
+    const end = new Date(`${todayKey}T00:00:00`);
+    while (cursor < end) {
+      days.push({ key: getLocalDateKey(cursor), weekday: cursor.getDay() });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return days;
+  }, [reportStart, todayKey]);
+
+  const timeOffByUserDate = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    (activeOrg?.timeOffRequests ?? []).forEach((request) => {
+      if (request.status === "denied") {
+        return;
+      }
+      const day = new Date(`${request.date}T00:00:00`);
+      if (day < reportStart) {
+        return;
+      }
+      const set = map.get(request.userId) ?? new Set<string>();
+      set.add(request.date);
+      map.set(request.userId, set);
+    });
+    return map;
+  }, [activeOrg, reportStart]);
+
+  const presenceByUserDate = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    (activeOrg?.punchRecords ?? []).forEach((record) => {
+      const start = new Date(record.startAt);
+      if (start < reportStart) {
+        return;
+      }
+      const key = getLocalDateKey(start);
+      const set = map.get(record.userId) ?? new Set<string>();
+      set.add(key);
+      map.set(record.userId, set);
+    });
+    return map;
+  }, [activeOrg, reportStart]);
+
+  const attendanceByUser = useMemo(() => {
+    const map = new Map<string, { absent: number; expected: number }>();
+    (activeOrg?.employees ?? []).forEach((employee) => {
+      if (employee.role === "admin" || !employee.canPunch) {
+        map.set(employee.id, { absent: 0, expected: 0 });
+        return;
+      }
+      const presence = presenceByUserDate.get(employee.id) ?? new Set<string>();
+      const timeOff = timeOffByUserDate.get(employee.id) ?? new Set<string>();
+      let expected = 0;
+      let absent = 0;
+      rangeDays.forEach(({ key, weekday }) => {
+        if (!employee.workDays.includes(weekday)) {
+          return;
+        }
+        expected += 1;
+        if (presence.has(key)) {
+          return;
+        }
+        if (timeOff.has(key)) {
+          return;
+        }
+        absent += 1;
+      });
+      map.set(employee.id, { absent, expected });
+    });
+    return map;
+  }, [activeOrg, presenceByUserDate, timeOffByUserDate, rangeDays]);
+
   const formatMinutes = (value: number) => {
     const rounded = Math.round(value);
     const hours = Math.floor(rounded / 60);
@@ -1112,11 +1294,10 @@ export default function Home() {
     const records = (activeOrg?.punchRecords ?? []).filter(
       (record) => record.userId === employee.id && record.endAt
     );
-
-    let totalMinutes = 0;
-    let lateCount = 0;
-    let overtimeMinutes = 0;
-    const daySet = new Set<string>();
+    const dayBuckets = new Map<
+      string,
+      { earliestStart: Date; latestEnd: Date; totalMinutes: number }
+    >();
 
     records.forEach((record) => {
       const start = new Date(record.startAt);
@@ -1128,34 +1309,61 @@ export default function Home() {
       }
       const end = new Date(record.endAt);
       const duration = Math.max(0, (end.getTime() - start.getTime()) / 60000);
-      totalMinutes += duration;
-      daySet.add(start.toDateString());
+      const dayKey = getLocalDateKey(start);
+      const entry = dayBuckets.get(dayKey);
+      if (entry) {
+        entry.totalMinutes += duration;
+        if (start < entry.earliestStart) {
+          entry.earliestStart = start;
+        }
+        if (end > entry.latestEnd) {
+          entry.latestEnd = end;
+        }
+      } else {
+        dayBuckets.set(dayKey, {
+          earliestStart: start,
+          latestEnd: end,
+          totalMinutes: duration,
+        });
+      }
+    });
 
-      const shiftStartMinutes = timeToMinutes(
-        employee.shiftStart || activeOrg?.settings.shiftStart || DEFAULT_SETTINGS.shiftStart
-      );
-      const lateAfter =
-        shiftStartMinutes +
-        (activeOrg?.settings.toleranceMinutes ?? DEFAULT_SETTINGS.toleranceMinutes);
-      const startMinutes = getMinutesOfDay(start);
+    let totalMinutes = 0;
+    let lateCount = 0;
+    let overtimeMinutes = 0;
+
+    const shiftStartMinutes = timeToMinutes(
+      employee.shiftStart || activeOrg?.settings.shiftStart || DEFAULT_SETTINGS.shiftStart
+    );
+    const lateAfter =
+      shiftStartMinutes +
+      (activeOrg?.settings.toleranceMinutes ?? DEFAULT_SETTINGS.toleranceMinutes);
+
+    const overtimeAfter = timeToMinutes(
+      activeOrg?.settings.overtimeAfter || employee.shiftEnd || DEFAULT_SETTINGS.overtimeAfter
+    );
+
+    dayBuckets.forEach((entry) => {
+      totalMinutes += entry.totalMinutes;
+      const startMinutes = getMinutesOfDay(entry.earliestStart);
       if (startMinutes > lateAfter) {
         lateCount += 1;
       }
-
-      const overtimeAfter = timeToMinutes(
-        activeOrg?.settings.overtimeAfter || employee.shiftEnd || DEFAULT_SETTINGS.overtimeAfter
-      );
-      const endMinutes = getMinutesOfDay(end);
+      const endMinutes = getMinutesOfDay(entry.latestEnd);
       if (endMinutes > overtimeAfter) {
         overtimeMinutes += endMinutes - overtimeAfter;
       }
     });
 
+    const attendance = attendanceByUser.get(employee.id);
+
     return {
       totalMinutes,
       lateCount,
       overtimeMinutes,
-      daysWorked: daySet.size,
+      daysWorked: dayBuckets.size,
+      absentCount: attendance?.absent ?? 0,
+      expectedDays: attendance?.expected ?? 0,
     };
   };
 
@@ -1174,7 +1382,7 @@ export default function Home() {
             points: pointsByUser.get(employee.id) ?? 0,
           };
         }),
-    [activeOrg, reportStart, pointsByUser]
+    [activeOrg, reportStart, pointsByUser, attendanceByUser]
   );
 
   const employeeSearchTerm = employeeSearch.trim().toLowerCase();
@@ -1206,6 +1414,7 @@ export default function Home() {
       "id_externo",
       "funcao",
       "dias",
+      "faltas",
       "minutos",
       "atrasos",
       "extra_min",
@@ -1218,6 +1427,7 @@ export default function Home() {
         escapeCsv(row.externalId ?? ""),
         escapeCsv(row.role),
         row.daysWorked,
+        row.absentCount,
         Math.round(row.totalMinutes),
         row.lateCount,
         Math.round(row.overtimeMinutes),
@@ -1528,25 +1738,7 @@ export default function Home() {
   };
 
   const handleSyncNow = async () => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    setSyncStatus("syncing");
-    try {
-      const response = await fetch("/api/state", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: APP_STATE_KEY, data }),
-      });
-      if (!response.ok) {
-        throw new Error("Erro ao salvar");
-      }
-      const payload = (await response.json()) as { updatedAt?: string };
-      setSyncStatus("synced");
-      setLastSyncAt(payload.updatedAt ? new Date(payload.updatedAt) : new Date());
-    } catch {
-      setSyncStatus("error");
-    }
+    await pullRemoteData("manual");
   };
 
   const handleAddPayment = () => {
@@ -2139,6 +2331,9 @@ export default function Home() {
                 </span>
                 <span className="stat-note">
                   Dias: {currentMetrics?.daysWorked ?? 0}
+                  {currentMetrics?.expectedDays
+                    ? ` / ${currentMetrics.expectedDays}`
+                    : ""}
                 </span>
               </div>
               <div className="stat">
@@ -2148,6 +2343,11 @@ export default function Home() {
                   Tolerancia{" "}
                   {activeOrg?.settings.toleranceMinutes ?? DEFAULT_SETTINGS.toleranceMinutes}m
                 </span>
+              </div>
+              <div className="stat">
+                <span className="stat-label">Faltas</span>
+                <span className="stat-value">{currentMetrics?.absentCount ?? 0}</span>
+                <span className="stat-note">Dias sem registro</span>
               </div>
               <div className="stat">
                 <span className="stat-label">Hora extra</span>
@@ -3094,6 +3294,10 @@ export default function Home() {
                         <div className="metric">
                           <span className="stat-label">Dias</span>
                           <strong>{row.daysWorked}</strong>
+                        </div>
+                        <div className="metric">
+                          <span className="stat-label">Faltas</span>
+                          <strong>{row.absentCount}</strong>
                         </div>
                         <div className="metric">
                           <span className="stat-label">Extra</span>
