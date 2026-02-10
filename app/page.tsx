@@ -231,9 +231,6 @@ export default function Home() {
     setLastSyncAt(next);
   }, []);
 
-  const protectionMessage =
-    "Acesso bloqueado pelo Vercel. Desative a protecao de deploy no painel.";
-
   const formatSyncError = useCallback(
     (error: unknown, fallback: string) => {
       if (error instanceof Error && error.message) {
@@ -241,6 +238,27 @@ export default function Home() {
       }
       if (typeof error === "string" && error.trim()) {
         return error.trim();
+      }
+      return fallback;
+    },
+    []
+  );
+
+  const readResponseError = useCallback(
+    async (response: Response, fallback: string) => {
+      try {
+        const payload = (await response.json()) as { error?: string; detail?: string };
+        if (payload?.error && payload?.detail) {
+          return `${payload.error} ${payload.detail}`;
+        }
+        if (payload?.detail) {
+          return payload.detail;
+        }
+        if (payload?.error) {
+          return payload.error;
+        }
+      } catch {
+        // ignore parsing errors
       }
       return fallback;
     },
@@ -285,10 +303,11 @@ export default function Home() {
           cache: "no-store",
         });
         if (!response.ok) {
-          if (response.status === 401 || response.status === 403) {
-            throw new Error(protectionMessage);
-          }
-          throw new Error(`Erro ${response.status} ao carregar dados.`);
+          const message = await readResponseError(
+            response,
+            `Erro ${response.status} ao carregar dados.`
+          );
+          throw new Error(message);
         }
         const payload = (await response.json()) as {
           data?: Partial<AppData>;
@@ -323,7 +342,7 @@ export default function Home() {
         syncFetchRef.current = null;
       }
     },
-    [applyRemoteData, formatSyncError, protectionMessage, updateSyncStamp]
+    [applyRemoteData, formatSyncError, readResponseError, updateSyncStamp]
   );
 
   useEffect(() => {
@@ -456,10 +475,11 @@ export default function Home() {
           body: JSON.stringify({ key: APP_STATE_KEY, data }),
         });
         if (!response.ok) {
-          if (response.status === 401 || response.status === 403) {
-            throw new Error(protectionMessage);
-          }
-          throw new Error(`Erro ${response.status} ao salvar dados.`);
+          const message = await readResponseError(
+            response,
+            `Erro ${response.status} ao salvar dados.`
+          );
+          throw new Error(message);
         }
         const payload = (await response.json()) as { updatedAt?: string };
         setSyncStatus("synced");
@@ -1787,10 +1807,11 @@ export default function Home() {
         body: JSON.stringify({ key: APP_STATE_KEY, data }),
       });
       if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          throw new Error(protectionMessage);
-        }
-        throw new Error(`Erro ${response.status} ao salvar dados.`);
+        const message = await readResponseError(
+          response,
+          `Erro ${response.status} ao salvar dados.`
+        );
+        throw new Error(message);
       }
       const payload = (await response.json()) as { updatedAt?: string };
       setSyncStatus("synced");
