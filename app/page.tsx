@@ -48,6 +48,20 @@ import {
   normalizeOrg,
 } from "./lib/app-data";
 
+const ADMIN_NAV_ITEMS = [
+  { id: "admin-links", label: "Links" },
+  { id: "admin-companies", label: "Empresas" },
+  { id: "admin-monitor", label: "Ao vivo" },
+  { id: "admin-settings", label: "Config" },
+  { id: "admin-team", label: "Equipe" },
+  { id: "admin-timeoff", label: "Folgas" },
+  { id: "admin-reports", label: "Relatorios" },
+  { id: "admin-integrations", label: "Integracoes" },
+  { id: "admin-payroll", label: "Folha" },
+  { id: "admin-payments", label: "Pagamentos" },
+  { id: "admin-profile", label: "Perfil" },
+];
+
 export default function Home() {
   const [data, setData] = useState<AppData>(DEFAULT_DATA);
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -2513,7 +2527,22 @@ export default function Home() {
             </section>
           ) : (
             <>
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card admin-nav-card" id="admin-top">
+              <div className="admin-header">
+                <h3>Painel admin</h3>
+                <span className="admin-pill">Atalhos</span>
+              </div>
+              <p>Navegacao rapida para as principais areas.</p>
+              <nav className="admin-nav" aria-label="Atalhos admin">
+                {ADMIN_NAV_ITEMS.map((item) => (
+                  <a key={item.id} className="admin-nav-pill" href={`#${item.id}`}>
+                    {item.label}
+                  </a>
+                ))}
+              </nav>
+            </section>
+
+            <section className="tool-card admin-card" id="admin-links">
               <div className="admin-header">
                 <h3>Links de acesso</h3>
                 <span className="admin-pill">Admin</span>
@@ -2574,7 +2603,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-companies">
               <div className="admin-header">
                 <h3>Empresas</h3>
                 <span className="admin-pill">Multi</span>
@@ -2648,7 +2677,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-monitor">
               <div className="admin-header">
                 <h3>Monitoramento</h3>
                 <span className="admin-pill">Ao vivo</span>
@@ -2687,7 +2716,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-settings">
               <div className="admin-header">
                 <h3>Configuracoes</h3>
                 <span className="admin-pill">Personalizar</span>
@@ -2883,7 +2912,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-profile">
               <div className="admin-header">
                 <h3>Conta admin</h3>
                 <span className="admin-pill">Perfil</span>
@@ -2938,7 +2967,7 @@ export default function Home() {
               </button>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-team">
               <div className="admin-header">
                 <h3>Cadastro de funcionarios</h3>
                 <span className="admin-pill">Equipe</span>
@@ -3225,7 +3254,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-timeoff">
               <div className="admin-header">
                 <h3>Solicitacoes de folga</h3>
                 <span className="admin-pill">Admin</span>
@@ -3280,7 +3309,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-tasks">
               <div className="admin-header">
                 <h3>Tarefas da empresa</h3>
                 <span className="admin-pill">Pontos</span>
@@ -3355,7 +3384,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-reports">
               <div className="admin-header">
                 <h3>Relatorios</h3>
                 <span className="admin-pill">Produtividade</span>
@@ -3406,7 +3435,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-integrations">
               <div className="admin-header">
                 <h3>Integracoes</h3>
                 <span className="admin-pill">Exportacao</span>
@@ -3519,7 +3548,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-payroll">
               <div className="admin-header">
                 <h3>Folha de pagamento</h3>
                 <span className="admin-pill">Admin</span>
@@ -3551,7 +3580,7 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card">
+            <section className="tool-card admin-card" id="admin-payments">
               <div className="admin-header">
                 <h3>Pagamentos</h3>
                 <span className="admin-pill">Financeiro</span>
