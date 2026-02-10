@@ -231,6 +231,22 @@ export default function Home() {
     setLastSyncAt(next);
   }, []);
 
+  const protectionMessage =
+    "Acesso bloqueado pelo Vercel. Desative a protecao de deploy no painel.";
+
+  const formatSyncError = useCallback(
+    (error: unknown, fallback: string) => {
+      if (error instanceof Error && error.message) {
+        return error.message;
+      }
+      if (typeof error === "string" && error.trim()) {
+        return error.trim();
+      }
+      return fallback;
+    },
+    []
+  );
+
   const applyRemoteData = useCallback(
     (payload: Partial<AppData>, updatedAt?: string) => {
       skipNextPushRef.current = true;
@@ -269,6 +285,9 @@ export default function Home() {
           cache: "no-store",
         });
         if (!response.ok) {
+          if (response.status === 401 || response.status === 403) {
+            throw new Error(protectionMessage);
+          }
           throw new Error(`Erro ${response.status} ao carregar dados.`);
         }
         const payload = (await response.json()) as {
@@ -295,16 +314,16 @@ export default function Home() {
       syncFetchRef.current = task;
       try {
         await task;
-      } catch {
+      } catch (error) {
         if (mode === "manual") {
           setSyncStatus("error");
-          setSyncError("Falha ao carregar. Tente novamente.");
+          setSyncError(formatSyncError(error, "Falha ao carregar. Tente novamente."));
         }
       } finally {
         syncFetchRef.current = null;
       }
     },
-    [applyRemoteData, updateSyncStamp]
+    [applyRemoteData, formatSyncError, protectionMessage, updateSyncStamp]
   );
 
   useEffect(() => {
@@ -437,14 +456,17 @@ export default function Home() {
           body: JSON.stringify({ key: APP_STATE_KEY, data }),
         });
         if (!response.ok) {
+          if (response.status === 401 || response.status === 403) {
+            throw new Error(protectionMessage);
+          }
           throw new Error(`Erro ${response.status} ao salvar dados.`);
         }
         const payload = (await response.json()) as { updatedAt?: string };
         setSyncStatus("synced");
         updateSyncStamp(payload.updatedAt);
-      } catch {
+      } catch (error) {
         setSyncStatus("error");
-        setSyncError("Falha ao salvar. Verifique a conexao.");
+        setSyncError(formatSyncError(error, "Falha ao salvar. Verifique a conexao."));
       }
     }, 900);
   }, [data, dataLoaded]);
@@ -1765,14 +1787,17 @@ export default function Home() {
         body: JSON.stringify({ key: APP_STATE_KEY, data }),
       });
       if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+          throw new Error(protectionMessage);
+        }
         throw new Error(`Erro ${response.status} ao salvar dados.`);
       }
       const payload = (await response.json()) as { updatedAt?: string };
       setSyncStatus("synced");
       updateSyncStamp(payload.updatedAt);
-    } catch {
+    } catch (error) {
       setSyncStatus("error");
-      setSyncError("Falha ao inicializar. Verifique o servidor.");
+      setSyncError(formatSyncError(error, "Falha ao inicializar. Verifique o servidor."));
     }
   };
 
