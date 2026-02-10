@@ -140,6 +140,7 @@ export type ReportRange = "week" | "month" | "30d";
 
 export const STORAGE_KEY = "ponto-vivo-data-v1";
 export const SESSION_KEY = "ponto-vivo-session-v1";
+export const APP_STATE_KEY = "primary";
 
 export const WEEK_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"];
 

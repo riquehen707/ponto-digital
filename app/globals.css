@@ -1506,6 +1506,15 @@ select:focus-visible {
   background: rgba(29, 28, 26, 0.05);
 }
 
+.sync-status {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(29, 28, 26, 0.04);
+}
+
 .export-head {
   display: flex;
   align-items: center;

@@ -25,6 +25,7 @@ import {
   type ReportRange,
   STORAGE_KEY,
   SESSION_KEY,
+  APP_STATE_KEY,
   WEEK_LABELS,
   DEFAULT_SETTINGS,
   DEFAULT_TASKS,
@@ -108,10 +109,15 @@ export default function Home() {
     "all"
   );
   const [paymentLimit, setPaymentLimit] = useState(12);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "synced" | "error">(
+    "idle"
+  );
+  const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
   const [now, setNow] = useState(() => new Date());
 
   const watchIdRef = useRef<number | null>(null);
   const shiftActiveRef = useRef(false);
+  const saveTimeoutRef = useRef<number | null>(null);
 
   const activeOrgId =
     session?.type === "staff"
@@ -159,6 +165,57 @@ export default function Home() {
 
   const shiftActive = Boolean(openRecord);
 
+  const normalizeAppData = (
+    parsed: Partial<AppData> & {
+      employees?: Employee[];
+      settings?: Settings;
+      tasks?: Task[];
+      completions?: TaskCompletion[];
+      timeOffRequests?: TimeOffRequest[];
+      payments?: PaymentRecord[];
+      punchRecords?: PunchRecord[];
+    }
+  ): AppData => {
+    if (Array.isArray(parsed.organizations)) {
+      const organizations = parsed.organizations.map((org, index) =>
+        normalizeOrg(org, `org-${index + 1}`, `Empresa ${index + 1}`)
+      );
+      return {
+        adminUsers: Array.isArray(parsed.adminUsers)
+          ? parsed.adminUsers
+          : DEFAULT_DATA.adminUsers,
+        organizations: organizations.length ? organizations : DEFAULT_DATA.organizations,
+        currentOrgId:
+          parsed.currentOrgId ??
+          organizations[0]?.id ??
+          DEFAULT_DATA.currentOrgId,
+      };
+    }
+
+    if (Array.isArray(parsed.employees)) {
+      const org = normalizeOrg(
+        {
+          employees: parsed.employees,
+          settings: parsed.settings,
+          tasks: parsed.tasks,
+          completions: parsed.completions,
+          timeOffRequests: parsed.timeOffRequests,
+          payments: parsed.payments,
+          punchRecords: parsed.punchRecords,
+        },
+        "org-principal",
+        "Empresa Principal"
+      );
+      return {
+        adminUsers: DEFAULT_DATA.adminUsers,
+        organizations: [org],
+        currentOrgId: org.id,
+      };
+    }
+
+    return DEFAULT_DATA;
+  };
+
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
@@ -190,63 +247,71 @@ export default function Home() {
     if (typeof window === "undefined") {
       return;
     }
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (!saved) {
-      setDataLoaded(true);
-      return;
-    }
-    try {
-      const parsed = JSON.parse(saved) as Partial<AppData> & {
-        employees?: Employee[];
-        settings?: Settings;
-        tasks?: Task[];
-        completions?: TaskCompletion[];
-        timeOffRequests?: TimeOffRequest[];
-        payments?: PaymentRecord[];
-        punchRecords?: PunchRecord[];
-      };
+    let cancelled = false;
 
-      if (Array.isArray(parsed.organizations)) {
-        const organizations = parsed.organizations.map((org, index) =>
-          normalizeOrg(org, `org-${index + 1}`, `Empresa ${index + 1}`)
-        );
-        setData({
-          adminUsers: Array.isArray(parsed.adminUsers)
-            ? parsed.adminUsers
-            : DEFAULT_DATA.adminUsers,
-          organizations: organizations.length ? organizations : DEFAULT_DATA.organizations,
-          currentOrgId:
-            parsed.currentOrgId ??
-            organizations[0]?.id ??
-            DEFAULT_DATA.currentOrgId,
-        });
-      } else if (Array.isArray(parsed.employees)) {
-        const org = normalizeOrg(
-          {
-            employees: parsed.employees,
-            settings: parsed.settings,
-            tasks: parsed.tasks,
-            completions: parsed.completions,
-            timeOffRequests: parsed.timeOffRequests,
-            payments: parsed.payments,
-            punchRecords: parsed.punchRecords,
-          },
-          "org-principal",
-          "Empresa Principal"
-        );
-        setData({
-          adminUsers: DEFAULT_DATA.adminUsers,
-          organizations: [org],
-          currentOrgId: org.id,
-        });
-      } else {
-        setData(DEFAULT_DATA);
+    const loadLocal = () => {
+      const saved = window.localStorage.getItem(STORAGE_KEY);
+      if (!saved) {
+        return null;
       }
-    } catch {
-      setData(DEFAULT_DATA);
-    } finally {
-      setDataLoaded(true);
+      try {
+        const parsed = JSON.parse(saved) as Partial<AppData> & {
+          employees?: Employee[];
+          settings?: Settings;
+          tasks?: Task[];
+          completions?: TaskCompletion[];
+          timeOffRequests?: TimeOffRequest[];
+          payments?: PaymentRecord[];
+          punchRecords?: PunchRecord[];
+        };
+        return normalizeAppData(parsed);
+      } catch {
+        return null;
+      }
+    };
+
+    const localData = loadLocal();
+    if (localData) {
+      setData(localData);
     }
+
+    const fetchRemote = async () => {
+      setSyncStatus("syncing");
+      try {
+        const response = await fetch(`/api/state?key=${APP_STATE_KEY}`, {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error("Erro ao carregar");
+        }
+        const payload = (await response.json()) as {
+          data?: Partial<AppData>;
+          updatedAt?: string;
+        };
+        if (payload?.data) {
+          setData(normalizeAppData(payload.data));
+          setSyncStatus("synced");
+          setLastSyncAt(payload.updatedAt ? new Date(payload.updatedAt) : new Date());
+        } else if (!localData) {
+          setData(DEFAULT_DATA);
+        }
+      } catch {
+        if (!localData) {
+          setData(DEFAULT_DATA);
+        }
+        setSyncStatus("error");
+      } finally {
+        if (!cancelled) {
+          setDataLoaded(true);
+        }
+      }
+    };
+
+    fetchRemote();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -254,6 +319,31 @@ export default function Home() {
       return;
     }
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    if (!navigator.onLine) {
+      setSyncStatus("error");
+      return;
+    }
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+    }
+    setSyncStatus("syncing");
+    saveTimeoutRef.current = window.setTimeout(async () => {
+      try {
+        const response = await fetch("/api/state", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: APP_STATE_KEY, data }),
+        });
+        if (!response.ok) {
+          throw new Error("Erro ao salvar");
+        }
+        const payload = (await response.json()) as { updatedAt?: string };
+        setSyncStatus("synced");
+        setLastSyncAt(payload.updatedAt ? new Date(payload.updatedAt) : new Date());
+      } catch {
+        setSyncStatus("error");
+      }
+    }, 900);
   }, [data, dataLoaded]);
 
   useEffect(() => {
@@ -403,6 +493,14 @@ export default function Home() {
 
   useEffect(() => {
     return () => stopWatch();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
+    };
   }, []);
 
   const updateOrg = (orgId: string, updater: (org: Organization) => Organization) => {
@@ -1426,6 +1524,28 @@ export default function Home() {
       setExportNotice("Importacao concluida.");
     } catch (error) {
       setImportError("Erro ao importar. Verifique o JSON.");
+    }
+  };
+
+  const handleSyncNow = async () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    setSyncStatus("syncing");
+    try {
+      const response = await fetch("/api/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: APP_STATE_KEY, data }),
+      });
+      if (!response.ok) {
+        throw new Error("Erro ao salvar");
+      }
+      const payload = (await response.json()) as { updatedAt?: string };
+      setSyncStatus("synced");
+      setLastSyncAt(payload.updatedAt ? new Date(payload.updatedAt) : new Date());
+    } catch {
+      setSyncStatus("error");
     }
   };
 
@@ -3000,6 +3120,34 @@ export default function Home() {
                 <span className="admin-pill">Exportacao</span>
               </div>
               <p>Exporte dados para outros sistemas ou importe ajustes.</p>
+              <div className="sync-status">
+                <span
+                  className={`status-pill ${
+                    syncStatus === "synced"
+                      ? "approved"
+                      : syncStatus === "syncing"
+                      ? "pending"
+                      : syncStatus === "error"
+                      ? "denied"
+                      : ""
+                  }`}
+                >
+                  {syncStatus === "synced"
+                    ? "Sincronizado"
+                    : syncStatus === "syncing"
+                    ? "Sincronizando"
+                    : syncStatus === "error"
+                    ? "Falha"
+                    : "Offline"}
+                </span>
+                <span className="entry-note">
+                  Ultima sync:{" "}
+                  {lastSyncAt ? lastSyncAt.toLocaleString("pt-BR") : "Sem registro"}
+                </span>
+                <button className="ghost ghost--small" type="button" onClick={handleSyncNow}>
+                  Sincronizar agora
+                </button>
+              </div>
               <div className="action-grid">
                 <button className="action-btn" type="button" onClick={handleExportJson}>
                   Exportar JSON
