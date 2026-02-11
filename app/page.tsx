@@ -1,9 +1,8 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import HomeClock from "./components/HomeClock";
 import LoginScreen from "./components/LoginScreen";
-import AdminSyncBar from "./components/AdminSyncBar";
 import {
   type GeoStatus,
   type GeoInfo,
@@ -49,17 +48,12 @@ import {
 } from "./lib/app-data";
 
 const ADMIN_NAV_ITEMS = [
-  { id: "admin-links", label: "Links" },
-  { id: "admin-companies", label: "Empresas" },
+  { id: "calendar-card", label: "Calendario" },
+  { id: "admin-team-section", label: "Equipe" },
   { id: "admin-monitor", label: "Ao vivo" },
-  { id: "admin-settings", label: "Config" },
-  { id: "admin-team", label: "Equipe" },
-  { id: "admin-timeoff", label: "Folgas" },
-  { id: "admin-reports", label: "Relatorios" },
+  { id: "admin-dashboard", label: "Dashboard" },
+  { id: "admin-finance", label: "Financeiro" },
   { id: "admin-integrations", label: "Integracoes" },
-  { id: "admin-payroll", label: "Folha" },
-  { id: "admin-payments", label: "Pagamentos" },
-  { id: "admin-profile", label: "Perfil" },
 ];
 
 export default function Home() {
@@ -124,6 +118,10 @@ export default function Home() {
     "all"
   );
   const [paymentLimit, setPaymentLimit] = useState(12);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [adminTeamTab, setAdminTeamTab] = useState<"links" | "requests" | "list">(
+    "links"
+  );
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "synced" | "error">(
     "idle"
   );
@@ -376,6 +374,7 @@ export default function Home() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setMenuOpen(false);
+        setConfigOpen(false);
       }
     };
 
@@ -1143,6 +1142,26 @@ export default function Home() {
     return map;
   }, [activeOrg, currentEmployeeId]);
 
+  const teamRequestMap = useMemo(() => {
+    const map = new Map<
+      string,
+      { pending: Set<string>; approved: Set<string>; denied: Set<string> }
+    >();
+    if (!activeOrg) {
+      return map;
+    }
+    activeOrg.timeOffRequests.forEach((request) => {
+      const entry = map.get(request.date) ?? {
+        pending: new Set<string>(),
+        approved: new Set<string>(),
+        denied: new Set<string>(),
+      };
+      entry[request.status].add(request.userId);
+      map.set(request.date, entry);
+    });
+    return map;
+  }, [activeOrg]);
+
   const selectedDateKey = useMemo(() => getLocalDateKey(selectedDate), [selectedDate]);
 
   const selectedRequest = currentEmployeeId
@@ -1173,6 +1192,12 @@ export default function Home() {
       isSelected: boolean;
       dayType: "work" | "off";
       requestStatus?: TimeOffRequest["status"];
+      pendingCount: number;
+      approvedCount: number;
+      scheduledCount: number;
+      availableCount: number;
+      coverage: "low" | "ok" | "high";
+      workerNames: string[];
     }>;
 
     for (let i = 0; i < 42; i += 1) {
@@ -1182,13 +1207,38 @@ export default function Home() {
       const inMonth = date.getMonth() === viewMonth.getMonth();
       const isToday = isSameDay(date, now);
       const isSelected = isSameDay(date, selectedDate);
+      const weekday = date.getDay();
+      const scheduledEmployees = (activeOrg?.employees ?? []).filter(
+        (employee) => employee.role !== "admin" && employee.workDays.includes(weekday)
+      );
+      const requestEntry = teamRequestMap.get(key);
+      const approvedIds = requestEntry?.approved ?? new Set<string>();
+      const pendingCount = requestEntry?.pending.size ?? 0;
+      const approvedCount = approvedIds.size;
+      const availableEmployees = scheduledEmployees.filter(
+        (employee) => !approvedIds.has(employee.id)
+      );
+      const minStaff = activeOrg?.settings.minStaff ?? DEFAULT_SETTINGS.minStaff;
+      const maxStaff = activeOrg?.settings.maxStaff ?? DEFAULT_SETTINGS.maxStaff;
+      const availableCount = availableEmployees.length;
+      const scheduledCount = scheduledEmployees.length;
+      const coverage =
+        availableCount < minStaff
+          ? "low"
+          : availableCount > maxStaff
+          ? "high"
+          : "ok";
+      const workerNames = availableEmployees.map((employee) => employee.name);
       const dayType = getDayType(
-        date.getDay(),
+        weekday,
         personalProfile,
         activeOrg?.employees ?? [],
         activeOrg?.settings ?? DEFAULT_SETTINGS
       );
       const request = requestMap.get(key);
+      const requestStatus =
+        request?.status ??
+        (pendingCount > 0 ? "pending" : approvedCount > 0 ? "approved" : undefined);
 
       days.push({
         date,
@@ -1197,7 +1247,13 @@ export default function Home() {
         isToday,
         isSelected,
         dayType,
-        requestStatus: request?.status,
+        requestStatus,
+        pendingCount,
+        approvedCount,
+        scheduledCount,
+        availableCount,
+        coverage,
+        workerNames,
       });
     }
 
@@ -1208,8 +1264,60 @@ export default function Home() {
     activeOrg,
     personalProfile,
     requestMap,
+    teamRequestMap,
     now,
   ]);
+
+  function getShiftMinutes(employee: Employee) {
+    const startValue =
+      employee.shiftStart || activeOrg?.settings.shiftStart || DEFAULT_SETTINGS.shiftStart;
+    const endValue =
+      employee.shiftEnd || activeOrg?.settings.shiftEnd || DEFAULT_SETTINGS.shiftEnd;
+    const startMinutes = timeToMinutes(startValue);
+    const endMinutes = timeToMinutes(endValue);
+    if (endMinutes <= startMinutes) {
+      return 24 * 60 - startMinutes + endMinutes;
+    }
+    return endMinutes - startMinutes;
+  }
+
+  const selectedDaySummary = useMemo(() => {
+    if (!activeOrg) {
+      return null;
+    }
+    const weekday = selectedDate.getDay();
+    const scheduledEmployees = activeOrg.employees.filter(
+      (employee) => employee.role !== "admin" && employee.workDays.includes(weekday)
+    );
+    const requestEntry = teamRequestMap.get(selectedDateKey);
+    const approvedIds = requestEntry?.approved ?? new Set<string>();
+    const pendingCount = requestEntry?.pending.size ?? 0;
+    const availableEmployees = scheduledEmployees.filter(
+      (employee) => !approvedIds.has(employee.id)
+    );
+    const minStaff = activeOrg.settings.minStaff ?? DEFAULT_SETTINGS.minStaff;
+    const maxStaff = activeOrg.settings.maxStaff ?? DEFAULT_SETTINGS.maxStaff;
+    const availableCount = availableEmployees.length;
+    const coverage =
+      availableCount < minStaff
+        ? "low"
+        : availableCount > maxStaff
+        ? "high"
+        : "ok";
+    const expectedMinutes = availableEmployees.reduce(
+      (total, employee) => total + getShiftMinutes(employee),
+      0
+    );
+    return {
+      scheduledEmployees,
+      availableEmployees,
+      pendingCount,
+      coverage,
+      expectedMinutes,
+      minStaff,
+      maxStaff,
+    };
+  }, [activeOrg, getShiftMinutes, selectedDate, selectedDateKey, teamRequestMap]);
 
   const activeTasks = useMemo(
     () => (activeOrg ? activeOrg.tasks.filter((task) => task.active) : []),
@@ -1447,6 +1555,28 @@ export default function Home() {
     [activeOrg, reportStart, pointsByUser, attendanceByUser, now]
   );
 
+  const teamDashboard = useMemo(() => {
+    return reportRows.reduce(
+      (acc, row) => {
+        acc.totalMinutes += row.totalMinutes;
+        acc.overtimeMinutes += row.overtimeMinutes;
+        acc.lateCount += row.lateCount;
+        acc.absentCount += row.absentCount;
+        acc.daysWorked += row.daysWorked;
+        acc.points += row.points;
+        return acc;
+      },
+      {
+        totalMinutes: 0,
+        overtimeMinutes: 0,
+        lateCount: 0,
+        absentCount: 0,
+        daysWorked: 0,
+        points: 0,
+      }
+    );
+  }, [reportRows]);
+
   const employeeSearchTerm = employeeSearch.trim().toLowerCase();
   const filteredEmployees = useMemo(() => {
     const employees = activeOrg?.employees ?? [];
@@ -1558,6 +1688,61 @@ export default function Home() {
     });
     return [header.join(";"), ...rows].join("\n");
   }, [paymentsInRange, activeOrg]);
+
+  const staffPayments = useMemo(() => {
+    if (!currentEmployeeId || !activeOrg) {
+      return [] as PaymentRecord[];
+    }
+    return activeOrg.payments
+      .filter((payment) => payment.userId === currentEmployeeId)
+      .slice()
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [activeOrg, currentEmployeeId]);
+
+  const staffPaymentTotals = useMemo(() => {
+    return staffPayments.reduce(
+      (acc, payment) => {
+        if (payment.status === "paid") {
+          acc.paid += payment.amount;
+        } else {
+          acc.planned += payment.amount;
+        }
+        acc.count += 1;
+        return acc;
+      },
+      { paid: 0, planned: 0, count: 0 }
+    );
+  }, [staffPayments]);
+
+  const minWageMonthly =
+    activeOrg?.settings.minWageMonthly ?? DEFAULT_SETTINGS.minWageMonthly;
+  const minWageHours = activeOrg?.settings.minWageHours ?? DEFAULT_SETTINGS.minWageHours;
+  const minWageHourly =
+    minWageMonthly > 0 && minWageHours > 0 ? minWageMonthly / minWageHours : null;
+
+  const staffHourlyRate = useMemo(() => {
+    if (!currentEmployee || !currentEmployee.pay) {
+      return null;
+    }
+    const pay = currentEmployee.pay;
+    if (pay.type === "daily") {
+      const minutes = getShiftMinutes(currentEmployee);
+      if (!minutes) {
+        return null;
+      }
+      return pay.amount / (minutes / 60);
+    }
+    if (pay.type === "monthly") {
+      if (!minWageHours) {
+        return null;
+      }
+      return pay.amount / minWageHours;
+    }
+    return null;
+  }, [currentEmployee, getShiftMinutes, minWageHours]);
+
+  const wageRatio =
+    staffHourlyRate && minWageHourly ? staffHourlyRate / minWageHourly : null;
 
   const filteredPayments = useMemo(() => {
     const payments = activeOrg?.payments ?? [];
@@ -2063,6 +2248,9 @@ export default function Home() {
         aria-expanded={menuOpen}
       >
         Menu
+        {isAdmin && pendingRequests > 0 ? (
+          <span className="menu-badge">{pendingRequests}</span>
+        ) : null}
       </button>
 
       <div
@@ -2076,6 +2264,12 @@ export default function Home() {
           <div>
             <div className="menu-title">Menu</div>
             <div className="menu-subtitle">Bem vindo, {displayName}</div>
+            {isAdmin && pendingRequests > 0 ? (
+              <div className="menu-alert">
+                {pendingRequests} solicitacao{pendingRequests > 1 ? "es" : ""} de
+                folga pendente{pendingRequests > 1 ? "s" : ""}.
+              </div>
+            ) : null}
             {isAdmin ? (
               <div className="menu-org">
                 <label>Empresa ativa</label>
@@ -2092,17 +2286,40 @@ export default function Home() {
               </div>
             ) : null}
           </div>
-          <button
-            className="menu-close"
-            type="button"
-            onClick={() => setMenuOpen(false)}
-          >
-            Fechar
-          </button>
+          <div className="menu-actions">
+            {isAdmin ? (
+              <button
+                className="menu-refresh"
+                type="button"
+                onClick={handleSyncNow}
+              >
+                Atualizar
+              </button>
+            ) : null}
+            {isAdmin ? (
+              <button
+                className="menu-config"
+                type="button"
+                onClick={() => setConfigOpen(true)}
+              >
+                Config
+              </button>
+            ) : null}
+            <button
+              className="menu-close"
+              type="button"
+              onClick={() => setMenuOpen(false)}
+            >
+              Fechar
+            </button>
+          </div>
         </div>
+        {isAdmin && syncError ? (
+          <div className="sync-alert">{syncError}</div>
+        ) : null}
 
         <div className="menu-grid">
-          <section className="tool-card">
+          <section className="tool-card" id="calendar-card">
             <div className="card-header">
               <div>
                 <h3>Calendario da equipe</h3>
@@ -2143,14 +2360,20 @@ export default function Home() {
                       day.inMonth ? "" : "is-outside"
                     } ${day.isToday ? "is-today" : ""} ${
                       day.isSelected ? "is-selected" : ""
-                    } ${
-                      day.requestStatus ? `request-${day.requestStatus}` : ""
-                    }`}
+                    } ${day.requestStatus ? `request-${day.requestStatus}` : ""} ${
+                      isAdmin ? `coverage-${day.coverage}` : ""
+                    } ${day.pendingCount ? "has-requests" : ""}`}
                     type="button"
                     onClick={() => handleSelectDate(day.date)}
                     disabled={!day.inMonth}
                   >
-                    {day.date.getDate()}
+                    <span className="calendar-number">{day.date.getDate()}</span>
+                    {isAdmin ? (
+                      <span className="calendar-count">{day.availableCount}</span>
+                    ) : null}
+                    {day.pendingCount ? (
+                      <span className="calendar-request">{day.pendingCount}</span>
+                    ) : null}
                     {day.requestStatus ? (
                       <span className={`request-dot ${day.requestStatus}`} />
                     ) : null}
@@ -2168,6 +2391,18 @@ export default function Home() {
                 <span className="legend-dot off" />
                 Folga
               </div>
+              {isAdmin ? (
+                <>
+                  <div className="legend-item">
+                    <span className="legend-dot coverage-low" />
+                    Equipe baixa
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-dot coverage-high" />
+                    Equipe alta
+                  </div>
+                </>
+              ) : null}
               <div className="legend-item">
                 <span className="legend-dot request" />
                 Folga solicitada
@@ -2201,6 +2436,30 @@ export default function Home() {
                 <span className="entry-note">
                   Dias: {formatWorkDays(personalProfile.workDays)}
                 </span>
+              ) : null}
+              {isAdmin && selectedDaySummary ? (
+                <div className={`coverage-summary ${selectedDaySummary.coverage}`}>
+                  <div>
+                    <span>Equipe prevista</span>
+                    <strong>
+                      {selectedDaySummary.availableEmployees.length}/
+                      {selectedDaySummary.scheduledEmployees.length}
+                    </strong>
+                    <span className="entry-note">
+                      Meta: {selectedDaySummary.minStaff}-{selectedDaySummary.maxStaff}
+                    </span>
+                  </div>
+                  <div>
+                    <span>Horas previstas</span>
+                    <strong>{formatMinutes(selectedDaySummary.expectedMinutes)}</strong>
+                    {selectedDaySummary.pendingCount ? (
+                      <span className="entry-note">
+                        {selectedDaySummary.pendingCount} folga pendente
+                        {selectedDaySummary.pendingCount > 1 ? "s" : ""}
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
               ) : null}
               <div className="day-entries">
                 {scheduleEntries.length ? (
@@ -2482,6 +2741,84 @@ export default function Home() {
             </div>
           </section>
 
+          {!isAdmin ? (
+            <section className="tool-card user-finance">
+              <h3>Financeiro pessoal</h3>
+              <p>Pagamentos e comparativo com o salario minimo.</p>
+              <div className="stat-grid">
+                <div className="stat">
+                  <span className="stat-label">Pago</span>
+                  <span className="stat-value">
+                    {formatCurrency(staffPaymentTotals.paid)}
+                  </span>
+                  <span className="stat-note">
+                    Lancamentos: {staffPaymentTotals.count}
+                  </span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">Previsto</span>
+                  <span className="stat-value">
+                    {formatCurrency(staffPaymentTotals.planned)}
+                  </span>
+                  <span className="stat-note">Proximos pagamentos</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">Seu valor/hora</span>
+                  <span className="stat-value">
+                    {staffHourlyRate ? formatCurrency(staffHourlyRate) : "--"}
+                  </span>
+                  <span className="stat-note">Base na sua escala</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">Hora do minimo</span>
+                  <span className="stat-value">
+                    {minWageHourly ? formatCurrency(minWageHourly) : "--"}
+                  </span>
+                  <span className="stat-note">
+                    {minWageHourly
+                      ? "Referencia nacional"
+                      : "Defina nas configuracoes do admin"}
+                  </span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">Comparativo</span>
+                  <span className="stat-value">
+                    {wageRatio ? `${Math.round(wageRatio * 100)}%` : "--"}
+                  </span>
+                  <span className="stat-note">
+                    {wageRatio ? "Em relacao ao minimo" : "Sem dados"}
+                  </span>
+                </div>
+              </div>
+              <div className="payment-list compact">
+                {staffPayments.length ? (
+                  staffPayments.slice(0, 6).map((payment) => (
+                    <div key={payment.id} className="payment-item">
+                      <div>
+                        <strong>{payment.date}</strong>
+                        <span className="payment-meta">
+                          {payment.kind} Â- {payment.method}
+                        </span>
+                      </div>
+                      <div className="payment-actions">
+                        <span
+                          className={`status-pill ${
+                            payment.status === "paid" ? "approved" : "pending"
+                          }`}
+                        >
+                          {payment.status === "paid" ? "Pago" : "Previsto"}
+                        </span>
+                        <strong>{formatCurrency(payment.amount)}</strong>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <span className="entry-note">Nenhum pagamento registrado.</span>
+                )}
+              </div>
+            </section>
+          ) : null}
+
           <section className="tool-card account-card">
             <div className="account-header">
               <div>
@@ -2542,25 +2879,80 @@ export default function Home() {
               </nav>
             </section>
 
-            <section className="tool-card admin-card" id="admin-links">
+            <section className="tool-card admin-card" id="admin-team-section">
               <div className="admin-header">
-                <h3>Links de acesso</h3>
-                <span className="admin-pill">Admin</span>
+                <h3>Equipe</h3>
+                <span className="admin-pill">Colaboradores</span>
               </div>
-              <p>Envie links diretos para cada funcionario.</p>
-              <div className="admin-links">
-                <div className="admin-links-title">Equipe</div>
-                {teamAccounts.length ? (
-                  teamAccounts.map((employee) => (
-                    <div key={employee.id} className="admin-link-row">
+              <p>Links, solicitacoes e status rapido do time.</p>
+              <div className="admin-tabs">
+                <button
+                  className={`admin-tab ${adminTeamTab === "links" ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => setAdminTeamTab("links")}
+                >
+                  Links
+                </button>
+                <button
+                  className={`admin-tab ${
+                    adminTeamTab === "requests" ? "is-active" : ""
+                  }`}
+                  type="button"
+                  onClick={() => setAdminTeamTab("requests")}
+                >
+                  Folgas
+                </button>
+                <button
+                  className={`admin-tab ${adminTeamTab === "list" ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() => setAdminTeamTab("list")}
+                >
+                  Resumo
+                </button>
+              </div>
+
+              {adminTeamTab === "links" ? (
+                <div className="admin-links">
+                  <div className="admin-links-title">Equipe</div>
+                  {teamAccounts.length ? (
+                    teamAccounts.map((employee) => (
+                      <div key={employee.id} className="admin-link-row">
+                        <div>
+                          <strong>{employee.name}</strong>
+                          <span className="admin-link-text">
+                            {origin
+                              ? `${origin}/?autologin=${employee.token}${
+                                  activeOrgId ? `&org=${activeOrgId}` : ""
+                                }`
+                              : `/?autologin=${employee.token}${
+                                  activeOrgId ? `&org=${activeOrgId}` : ""
+                                }`}
+                          </span>
+                        </div>
+                        <button
+                          className="ghost ghost--small"
+                          type="button"
+                          onClick={() =>
+                            handleCopyLink(employee.token, activeOrgId ?? undefined)
+                          }
+                        >
+                          {copiedToken === employee.token ? "Copiado" : "Copiar"}
+                        </button>
+                      </div>
+                    ))
+                  ) : (
+                    <span className="entry-note">Nenhuma conta com ponto.</span>
+                  )}
+                  {testAccount ? (
+                    <div className="admin-link-row">
                       <div>
-                        <strong>{employee.name}</strong>
+                        <strong>{testAccount.name} (teste)</strong>
                         <span className="admin-link-text">
                           {origin
-                            ? `${origin}/?autologin=${employee.token}${
+                            ? `${origin}/?autologin=${testAccount.token}${
                                 activeOrgId ? `&org=${activeOrgId}` : ""
                               }`
-                            : `/?autologin=${employee.token}${
+                            : `/?autologin=${testAccount.token}${
                                 activeOrgId ? `&org=${activeOrgId}` : ""
                               }`}
                         </span>
@@ -2568,112 +2960,97 @@ export default function Home() {
                       <button
                         className="ghost ghost--small"
                         type="button"
-                        onClick={() => handleCopyLink(employee.token, activeOrgId ?? undefined)}
+                        onClick={() =>
+                          handleCopyLink(testAccount.token, activeOrgId ?? undefined)
+                        }
                       >
-                        {copiedToken === employee.token ? "Copiado" : "Copiar"}
+                        {copiedToken === testAccount.token ? "Copiado" : "Copiar"}
                       </button>
                     </div>
-                  ))
-                ) : (
-                  <span className="entry-note">Nenhuma conta com ponto.</span>
-                )}
-                {testAccount ? (
-                  <div className="admin-link-row">
-                    <div>
-                      <strong>{testAccount.name} (teste)</strong>
-                      <span className="admin-link-text">
-                        {origin
-                          ? `${origin}/?autologin=${testAccount.token}${
-                              activeOrgId ? `&org=${activeOrgId}` : ""
-                            }`
-                          : `/?autologin=${testAccount.token}${
-                              activeOrgId ? `&org=${activeOrgId}` : ""
-                            }`}
-                      </span>
-                    </div>
-                    <button
-                      className="ghost ghost--small"
-                      type="button"
-                      onClick={() => handleCopyLink(testAccount.token, activeOrgId ?? undefined)}
-                    >
-                      {copiedToken === testAccount.token ? "Copiado" : "Copiar"}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            </section>
+                  ) : null}
+                </div>
+              ) : null}
 
-            <section className="tool-card admin-card" id="admin-companies">
-              <div className="admin-header">
-                <h3>Empresas</h3>
-                <span className="admin-pill">Multi</span>
-              </div>
-              <p>Gerencie varias empresas com o mesmo admin.</p>
-              <div className="org-list">
-                {data.organizations.map((org) => (
-                  <div
-                    key={org.id}
-                    className={`org-item ${org.id === activeOrgId ? "is-active" : ""}`}
-                  >
-                    <div>
-                      <strong>{org.name}</strong>
-                      <span className="entry-note">
-                        Pessoas: {org.employees.length} | ID: {org.slug}
+              {adminTeamTab === "requests" ? (
+                <div className="timeoff-list">
+                  {adminRequests.length ? (
+                    adminRequests.map((request) => {
+                      const employee = activeOrg?.employees.find(
+                        (item) => item.id === request.userId
+                      );
+                      return (
+                        <div key={request.id} className="timeoff-item">
+                          <div>
+                            <strong>{employee?.name ?? "Funcionario"}</strong>
+                            <span className="entry-note">
+                              {new Date(
+                                `${request.date}T00:00:00`
+                              ).toLocaleDateString("pt-BR")}
+                            </span>
+                          </div>
+                          <div className="timeoff-actions">
+                            <select
+                              value={request.status}
+                              onChange={(event) =>
+                                handleUpdateTimeOffStatus(
+                                  request.id,
+                                  event.target.value as TimeOffRequest["status"]
+                                )
+                              }
+                            >
+                              {Object.entries(timeOffLabels).map(([value, label]) => (
+                                <option key={value} value={value}>
+                                  {label}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              className="ghost ghost--small"
+                              type="button"
+                              onClick={() => handleRemoveTimeOff(request.id)}
+                            >
+                              Remover
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <span className="entry-note">Sem solicitacoes.</span>
+                  )}
+                </div>
+              ) : null}
+
+              {adminTeamTab === "list" ? (
+                <div className="team-mini-list">
+                  {(activeOrg?.employees ?? []).map((employee) => (
+                    <div key={employee.id} className="team-mini-item">
+                      <div>
+                        <strong>{employee.name}</strong>
+                        <span className="entry-note">
+                          {employee.role} Â- {employee.shiftStart}-{employee.shiftEnd}
+                        </span>
+                      </div>
+                      <span
+                        className={`status-pill ${
+                          employee.canPunch ? "approved" : "denied"
+                        }`}
+                      >
+                        {employee.canPunch ? "Ponto" : "Sem ponto"}
                       </span>
                     </div>
-                    <div className="org-actions">
-                      <button
-                        className="ghost ghost--small"
-                        type="button"
-                        onClick={() => handleSelectOrg(org.id)}
-                      >
-                        {org.id === activeOrgId ? "Ativa" : "Selecionar"}
-                      </button>
-                      <button
-                        className="ghost ghost--small"
-                        type="button"
-                        onClick={() => handleEditOrg(org)}
-                      >
-                        Editar
-                      </button>
-                      <button
-                        className="ghost ghost--small"
-                        type="button"
-                        onClick={() => handleRemoveOrg(org.id)}
-                        disabled={data.organizations.length <= 1}
-                      >
-                        Remover
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="org-form">
-                <h4>{orgForm.mode === "new" ? "Nova empresa" : "Editar empresa"}</h4>
-                <div className="form-grid">
-                  <div>
-                    <label>Nome da empresa</label>
-                    <input
-                      type="text"
-                      value={orgForm.name}
-                      onChange={(event) =>
-                        setOrgForm((prev) => ({ ...prev, name: event.target.value }))
-                      }
-                    />
-                  </div>
+                  ))}
                 </div>
-                <div className="action-grid">
-                  <button className="action-btn" type="button" onClick={handleSaveOrg}>
-                    {orgForm.mode === "new" ? "Adicionar empresa" : "Salvar empresa"}
-                  </button>
-                  <button
-                    className="ghost ghost--small"
-                    type="button"
-                    onClick={() => setOrgForm({ id: "", name: "", mode: "new" })}
-                  >
-                    Cancelar
-                  </button>
-                </div>
+              ) : null}
+
+              <div className="admin-team-actions">
+                <button
+                  className="ghost ghost--small"
+                  type="button"
+                  onClick={() => setConfigOpen(true)}
+                >
+                  Gerenciar equipe
+                </button>
               </div>
             </section>
 
@@ -2713,202 +3090,6 @@ export default function Home() {
                 ) : (
                   <span className="entry-note">Nenhum turno ativo.</span>
                 )}
-              </div>
-            </section>
-
-            <section className="tool-card admin-card" id="admin-settings">
-              <div className="admin-header">
-                <h3>Configuracoes</h3>
-                <span className="admin-pill">Personalizar</span>
-              </div>
-              <p>Defina turno, tolerancia, GPS e limpeza.</p>
-              <div className="form-grid">
-                <div>
-                  <label>Turno padrao</label>
-                  <div className="inline-row">
-                    <input
-                      type="time"
-                      value={activeOrg?.settings.shiftStart ?? DEFAULT_SETTINGS.shiftStart}
-                      onChange={(event) =>
-                        handleSettingsChange({ shiftStart: event.target.value })
-                      }
-                    />
-                    <input
-                      type="time"
-                      value={activeOrg?.settings.shiftEnd ?? DEFAULT_SETTINGS.shiftEnd}
-                      onChange={(event) =>
-                        handleSettingsChange({ shiftEnd: event.target.value })
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="inline-row">
-                  <div>
-                    <label>Tolerancia (min)</label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={
-                        activeOrg?.settings.toleranceMinutes ??
-                        DEFAULT_SETTINGS.toleranceMinutes
-                      }
-                      onChange={(event) =>
-                        handleSettingsChange({
-                          toleranceMinutes: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label>Hora extra apos</label>
-                    <input
-                      type="time"
-                      value={activeOrg?.settings.overtimeAfter ?? DEFAULT_SETTINGS.overtimeAfter}
-                      onChange={(event) =>
-                        handleSettingsChange({ overtimeAfter: event.target.value })
-                      }
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label>Geofence (nome do local)</label>
-                  <input
-                    type="text"
-                    value={activeOrg?.settings.geofenceName ?? DEFAULT_SETTINGS.geofenceName}
-                    onChange={(event) =>
-                      handleSettingsChange({ geofenceName: event.target.value })
-                    }
-                  />
-                </div>
-                <div className="inline-row">
-                  <div>
-                    <label>Plus code</label>
-                    <input
-                      type="text"
-                      value={
-                        activeOrg?.settings.geofencePlusCode ??
-                        DEFAULT_SETTINGS.geofencePlusCode
-                      }
-                      onChange={(event) =>
-                        handleSettingsChange({
-                          geofencePlusCode: event.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label>Raio (m)</label>
-                    <input
-                      type="number"
-                      min={10}
-                      value={
-                        activeOrg?.settings.geofenceRadius ??
-                        DEFAULT_SETTINGS.geofenceRadius
-                      }
-                      onChange={(event) =>
-                        handleSettingsChange({
-                          geofenceRadius: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-                <div className="inline-row">
-                  <div>
-                    <label>Latitude</label>
-                    <input
-                      type="number"
-                      step="0.000001"
-                      value={activeOrg?.settings.geofenceLat ?? DEFAULT_SETTINGS.geofenceLat}
-                      onChange={(event) =>
-                        handleSettingsChange({
-                          geofenceLat: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label>Longitude</label>
-                    <input
-                      type="number"
-                      step="0.000001"
-                      value={activeOrg?.settings.geofenceLng ?? DEFAULT_SETTINGS.geofenceLng}
-                      onChange={(event) =>
-                        handleSettingsChange({
-                          geofenceLng: Number(event.target.value),
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label>Limpeza semanal</label>
-                  <div className="inline-row">
-                    <select
-                      value={activeOrg?.settings.cleaningDay ?? DEFAULT_SETTINGS.cleaningDay}
-                      onChange={(event) =>
-                        handleSettingsChange({
-                          cleaningDay: Number(event.target.value),
-                        })
-                      }
-                    >
-                      {[0, 1, 2, 3, 4, 5, 6].map((day) => (
-                        <option key={day} value={day}>
-                          {WEEK_LABELS[(day + 6) % 7]}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="time"
-                      value={
-                        activeOrg?.settings.cleaningStart ?? DEFAULT_SETTINGS.cleaningStart
-                      }
-                      onChange={(event) =>
-                        handleSettingsChange({
-                          cleaningStart: event.target.value,
-                        })
-                      }
-                    />
-                    <input
-                      type="time"
-                      value={activeOrg?.settings.cleaningEnd ?? DEFAULT_SETTINGS.cleaningEnd}
-                      onChange={(event) =>
-                        handleSettingsChange({ cleaningEnd: event.target.value })
-                      }
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label>Nota da limpeza</label>
-                  <input
-                    type="text"
-                    value={activeOrg?.settings.cleaningNote ?? DEFAULT_SETTINGS.cleaningNote}
-                    onChange={(event) =>
-                      handleSettingsChange({ cleaningNote: event.target.value })
-                    }
-                  />
-                </div>
-                <div>
-                  <label>Participantes da limpeza</label>
-                  <div className="toggle-list">
-                    {(activeOrg?.employees ?? [])
-                      .filter((employee) => employee.role !== "admin")
-                      .map((employee) => (
-                        <label key={employee.id} className="toggle-row">
-                          <input
-                            type="checkbox"
-                            checked={(activeOrg?.settings.cleaningParticipants ?? []).includes(
-                              employee.id
-                            )}
-                            onChange={() =>
-                              handleCleaningParticipantToggle(employee.id)
-                            }
-                          />
-                          <span>{employee.name}</span>
-                        </label>
-                      ))}
-                  </div>
-                </div>
               </div>
             </section>
 
@@ -2965,348 +3146,6 @@ export default function Home() {
               <button className="action-btn" type="button" onClick={handleSaveAdminProfile}>
                 Salvar perfil admin
               </button>
-            </section>
-
-            <section className="tool-card admin-card" id="admin-team">
-              <div className="admin-header">
-                <h3>Cadastro de funcionarios</h3>
-                <span className="admin-pill">Equipe</span>
-              </div>
-              <p>Crie contas, personalize escalas e permissoes.</p>
-              <div className="employee-search">
-                <label>Buscar</label>
-                <input
-                  type="text"
-                  value={employeeSearch}
-                  placeholder="Nome, email ou ID externo"
-                  onChange={(event) => setEmployeeSearch(event.target.value)}
-                />
-              </div>
-              <div className="employee-list">
-                {filteredEmployees.length ? (
-                  filteredEmployees.map((employee) => (
-                    <div key={employee.id} className="employee-card">
-                      <div className="employee-head">
-                        <div>
-                          <strong>{employee.name}</strong>
-                          <span className="employee-meta">
-                            {employee.role} | {employee.shiftStart}-{employee.shiftEnd}
-                          </span>
-                          <span className="employee-meta">
-                            Dias: {formatWorkDays(employee.workDays)}
-                          </span>
-                          {employee.externalId ? (
-                            <span className="employee-meta">
-                              ID externo: {employee.externalId}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="employee-tags">
-                          {employee.isTest ? (
-                            <span className="status-pill pending">Teste</span>
-                          ) : null}
-                          <span
-                            className={`status-pill ${
-                              employee.canPunch ? "approved" : "denied"
-                            }`}
-                          >
-                            {employee.canPunch ? "Ponto" : "Sem ponto"}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="employee-actions">
-                        <button
-                          className="ghost ghost--small"
-                          type="button"
-                          onClick={() => handleStartEditEmployee(employee)}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          className="ghost ghost--small"
-                          type="button"
-                          onClick={() =>
-                            handleCopyLink(employee.token, activeOrgId ?? undefined)
-                          }
-                        >
-                          {copiedToken === employee.token ? "Copiado" : "Copiar link"}
-                        </button>
-                        <button
-                          className="ghost ghost--small"
-                          type="button"
-                          onClick={() => handleRemoveEmployee(employee.id)}
-                          disabled={employee.id === currentEmployeeId}
-                        >
-                          Remover
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <span className="entry-note">Nenhum funcionario encontrado.</span>
-                )}
-              </div>
-
-              <div className="employee-form">
-                <h4>{employeeMode === "new" ? "Nova conta" : "Editar conta"}</h4>
-                <div className="form-grid">
-                  <div>
-                    <label>Nome</label>
-                    <input
-                      type="text"
-                      value={employeeForm.name}
-                      onChange={(event) =>
-                        setEmployeeForm((prev) => ({
-                          ...prev,
-                          name: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label>Email</label>
-                    <input
-                      type="email"
-                      value={employeeForm.email}
-                      onChange={(event) =>
-                        setEmployeeForm((prev) => ({
-                          ...prev,
-                          email: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label>Funcao</label>
-                    <select
-                      value={employeeForm.role}
-                      onChange={(event) =>
-                        setEmployeeForm((prev) => ({
-                          ...prev,
-                          role: event.target.value as Role,
-                        }))
-                      }
-                    >
-                      <option value="staff">Staff</option>
-                      <option value="manager">Manager</option>
-                      <option value="support">Support</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                  </div>
-                  <div className="inline-row">
-                    <div>
-                      <label>Inicio turno</label>
-                      <input
-                        type="time"
-                        value={employeeForm.shiftStart}
-                        onChange={(event) =>
-                          setEmployeeForm((prev) => ({
-                            ...prev,
-                            shiftStart: event.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                    <div>
-                      <label>Fim turno</label>
-                      <input
-                        type="time"
-                        value={employeeForm.shiftEnd}
-                        onChange={(event) =>
-                          setEmployeeForm((prev) => ({
-                            ...prev,
-                            shiftEnd: event.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label>Dias trabalhados</label>
-                    <div className="workday-grid">
-                      {[0, 1, 2, 3, 4, 5, 6].map((day) => (
-                        <button
-                          key={day}
-                          type="button"
-                          className={`workday-btn ${
-                            employeeForm.workDays.includes(day) ? "active" : ""
-                          }`}
-                          onClick={() => toggleWorkDay(day)}
-                        >
-                          {WEEK_LABELS[(day + 6) % 7]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <label>Token de acesso</label>
-                    <input
-                      type="text"
-                      placeholder="Gerado automaticamente"
-                      value={employeeForm.token}
-                      onChange={(event) =>
-                        setEmployeeForm((prev) => ({
-                          ...prev,
-                          token: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div>
-                    <label>ID externo</label>
-                    <input
-                      type="text"
-                      value={employeeForm.externalId}
-                      onChange={(event) =>
-                        setEmployeeForm((prev) => ({
-                          ...prev,
-                          externalId: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="inline-row">
-                    <div>
-                      <label>Tipo pagamento</label>
-                      <select
-                        value={employeeForm.payType}
-                        onChange={(event) =>
-                          setEmployeeForm((prev) => ({
-                            ...prev,
-                            payType: event.target.value as PayInfo["type"],
-                          }))
-                        }
-                      >
-                        <option value="daily">Diaria</option>
-                        <option value="monthly">Mensal</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label>Valor</label>
-                      <input
-                        type="number"
-                        value={employeeForm.payAmount}
-                        onChange={(event) =>
-                          setEmployeeForm((prev) => ({
-                            ...prev,
-                            payAmount: Number(event.target.value),
-                          }))
-                        }
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label>Nota pagamento</label>
-                    <input
-                      type="text"
-                      value={employeeForm.payNote}
-                      onChange={(event) =>
-                        setEmployeeForm((prev) => ({
-                          ...prev,
-                          payNote: event.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <label className="toggle-row">
-                    <input
-                      type="checkbox"
-                      checked={employeeForm.canPunch}
-                      onChange={(event) =>
-                        setEmployeeForm((prev) => ({
-                          ...prev,
-                          canPunch: event.target.checked,
-                        }))
-                      }
-                    />
-                    <span>Conta bate ponto</span>
-                  </label>
-                  <label className="toggle-row">
-                    <input
-                      type="checkbox"
-                      checked={employeeForm.isTest}
-                      onChange={(event) =>
-                        setEmployeeForm((prev) => ({
-                          ...prev,
-                          isTest: event.target.checked,
-                        }))
-                      }
-                    />
-                    <span>Conta de teste</span>
-                  </label>
-                </div>
-                <div className="action-grid">
-                  <button
-                    className="action-btn"
-                    type="button"
-                    onClick={handleSaveEmployee}
-                  >
-                    {employeeMode === "new" ? "Adicionar funcionario" : "Salvar ajustes"}
-                  </button>
-                  <button
-                    className="ghost ghost--small"
-                    type="button"
-                    onClick={resetEmployeeForm}
-                  >
-                    Limpar
-                  </button>
-                </div>
-              </div>
-            </section>
-
-            <section className="tool-card admin-card" id="admin-timeoff">
-              <div className="admin-header">
-                <h3>Solicitacoes de folga</h3>
-                <span className="admin-pill">Admin</span>
-              </div>
-              <p>Ajuste o status das solicitacoes.</p>
-              <div className="timeoff-list">
-                {adminRequests.length ? (
-                  adminRequests.map((request) => {
-                    const employee = activeOrg?.employees.find(
-                      (item) => item.id === request.userId
-                    );
-                    return (
-                      <div key={request.id} className="timeoff-item">
-                        <div>
-                          <strong>{employee?.name ?? "Funcionario"}</strong>
-                          <span className="entry-note">
-                            {new Date(
-                              `${request.date}T00:00:00`
-                            ).toLocaleDateString("pt-BR")}
-                          </span>
-                        </div>
-                        <div className="timeoff-actions">
-                          <select
-                            value={request.status}
-                            onChange={(event) =>
-                              handleUpdateTimeOffStatus(
-                                request.id,
-                                event.target.value as TimeOffRequest["status"]
-                              )
-                            }
-                          >
-                            {Object.entries(timeOffLabels).map(([value, label]) => (
-                              <option key={value} value={value}>
-                                {label}
-                              </option>
-                            ))}
-                          </select>
-                          <button
-                            className="ghost ghost--small"
-                            type="button"
-                            onClick={() => handleRemoveTimeOff(request.id)}
-                          >
-                            Remover
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <span className="entry-note">Sem solicitacoes.</span>
-                )}
-              </div>
             </section>
 
             <section className="tool-card admin-card" id="admin-tasks">
@@ -3384,12 +3223,38 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card" id="admin-reports">
+            <section className="tool-card admin-card" id="admin-dashboard">
               <div className="admin-header">
-                <h3>Relatorios</h3>
+                <h3>Dashboard</h3>
                 <span className="admin-pill">Produtividade</span>
               </div>
-              <p>Horas, atrasos, extras e pontos por periodo.</p>
+              <p>Visao geral do periodo selecionado.</p>
+              <div className="dashboard-grid">
+                <div className="stat">
+                  <span className="stat-label">Horas totais</span>
+                  <span className="stat-value">
+                    {formatMinutes(teamDashboard.totalMinutes)}
+                  </span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">Horas extra</span>
+                  <span className="stat-value">
+                    {formatMinutes(teamDashboard.overtimeMinutes)}
+                  </span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">Atrasos</span>
+                  <span className="stat-value">{teamDashboard.lateCount}</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">Faltas</span>
+                  <span className="stat-value">{teamDashboard.absentCount}</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">Pontos</span>
+                  <span className="stat-value">{teamDashboard.points}</span>
+                </div>
+              </div>
               <div className="report-list">
                 {reportRows.length ? (
                   reportRows.map((row) => (
@@ -3441,38 +3306,7 @@ export default function Home() {
                 <span className="admin-pill">Exportacao</span>
               </div>
               <p>Exporte dados para outros sistemas ou importe ajustes.</p>
-              <div className="sync-status">
-                <span
-                  className={`status-pill ${
-                    syncStatus === "synced"
-                      ? "approved"
-                      : syncStatus === "syncing"
-                      ? "pending"
-                      : syncStatus === "error"
-                      ? "denied"
-                      : ""
-                  }`}
-                >
-                  {syncStatus === "synced"
-                    ? "Sincronizado"
-                    : syncStatus === "syncing"
-                    ? "Sincronizando"
-                    : syncStatus === "error"
-                    ? "Falha"
-                    : "Offline"}
-                </span>
-                <span className="entry-note">
-                  Ultima sync:{" "}
-                  {lastSyncAt ? lastSyncAt.toLocaleString("pt-BR") : "Sem registro"}
-                </span>
-                <button className="ghost ghost--small" type="button" onClick={handleSyncNow}>
-                  Sincronizar agora
-                </button>
-              </div>
               <div className="action-grid">
-                <button className="action-btn" type="button" onClick={handleForceSave}>
-                  Inicializar banco
-                </button>
                 <button className="action-btn" type="button" onClick={handleExportJson}>
                   Exportar JSON
                 </button>
@@ -3548,44 +3382,46 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="tool-card admin-card" id="admin-payroll">
+            <section className="tool-card admin-card" id="admin-finance">
               <div className="admin-header">
-                <h3>Folha de pagamento</h3>
-                <span className="admin-pill">Admin</span>
+                <h3>Financeiro</h3>
+                <span className="admin-pill">Folha e pagamentos</span>
               </div>
-              <p>Valores visiveis apenas para o admin.</p>
-              <div className="admin-payroll">
-                {(activeOrg?.employees ?? []).filter((employee) => employee.pay).length ? (
-                  (activeOrg?.employees ?? [])
-                    .filter((employee) => employee.pay)
-                    .map((employee) => (
-                      <div key={employee.id} className="payroll-item">
-                        <div>
-                          <strong>{employee.name}</strong>
-                          <span className="payroll-meta">
-                            {employee.pay?.type === "monthly" ? "Mensal" : "Diaria"}
-                          </span>
-                          {employee.pay?.note ? (
-                            <span className="payroll-note">{employee.pay.note}</span>
-                          ) : null}
+              <p>Resumo da folha e registros financeiros.</p>
+              <details className="finance-details">
+                <summary>Folha de pagamento</summary>
+                <div className="admin-payroll compact">
+                  {(activeOrg?.employees ?? []).filter((employee) => employee.pay).length ? (
+                    (activeOrg?.employees ?? [])
+                      .filter((employee) => employee.pay)
+                      .map((employee) => (
+                        <div key={employee.id} className="payroll-item compact">
+                          <div>
+                            <strong>{employee.name}</strong>
+                            <span className="payroll-meta">
+                              {employee.pay?.type === "monthly" ? "Mensal" : "Diaria"}
+                            </span>
+                            <span className="payroll-meta">
+                              Turno {employee.shiftStart}-{employee.shiftEnd}
+                            </span>
+                            <span className="payroll-meta">
+                              Escala {formatWorkDays(employee.workDays)}
+                            </span>
+                            {employee.pay?.note ? (
+                              <span className="payroll-note">{employee.pay.note}</span>
+                            ) : null}
+                          </div>
+                          <div className="payroll-amount">
+                            {employee.pay ? formatCurrency(employee.pay.amount) : "-"}
+                          </div>
                         </div>
-                        <div className="payroll-amount">
-                          {employee.pay ? formatCurrency(employee.pay.amount) : "-"}
-                        </div>
-                      </div>
-                    ))
-                ) : (
-                  <span className="entry-note">Sem valores cadastrados.</span>
-                )}
-              </div>
-            </section>
+                      ))
+                  ) : (
+                    <span className="entry-note">Sem valores cadastrados.</span>
+                  )}
+                </div>
+              </details>
 
-            <section className="tool-card admin-card" id="admin-payments">
-              <div className="admin-header">
-                <h3>Pagamentos</h3>
-                <span className="admin-pill">Financeiro</span>
-              </div>
-              <p>Registre pagamentos, bonus e ajustes.</p>
               <div className="payment-summary">
                 {(activeOrg?.employees ?? [])
                   .filter((employee) => employee.role !== "admin")
@@ -3825,16 +3661,6 @@ export default function Home() {
         </div>
       </aside>
 
-      {isAdmin ? (
-        <AdminSyncBar
-          syncStatus={syncStatus}
-          lastSyncAt={lastSyncAt}
-          errorMessage={syncError}
-          onSyncNow={handleSyncNow}
-          onForceSave={handleForceSave}
-        />
-      ) : null}
-
       <HomeClock
         timeString={timeString}
         dateString={dateString}
@@ -3846,6 +3672,682 @@ export default function Home() {
         onShiftToggle={handleShiftToggle}
         openRecordStartAt={openRecord?.startAt}
       />
+
+      {isAdmin && configOpen ? (
+        <div className="config-overlay" onClick={() => setConfigOpen(false)}>
+          <div
+            className="config-panel"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="config-header">
+              <div>
+                <h3>Configuracoes</h3>
+                <span className="entry-note">
+                  Ajustes gerais, equipe e empresas.
+                </span>
+              </div>
+              <button
+                className="menu-close"
+                type="button"
+                onClick={() => setConfigOpen(false)}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="config-content">
+              <section className="config-section">
+                <h4>Operacao</h4>
+                <div className="form-grid">
+                  <div>
+                    <label>Turno padrao</label>
+                    <div className="inline-row">
+                      <input
+                        type="time"
+                        value={activeOrg?.settings.shiftStart ?? DEFAULT_SETTINGS.shiftStart}
+                        onChange={(event) =>
+                          handleSettingsChange({ shiftStart: event.target.value })
+                        }
+                      />
+                      <input
+                        type="time"
+                        value={activeOrg?.settings.shiftEnd ?? DEFAULT_SETTINGS.shiftEnd}
+                        onChange={(event) =>
+                          handleSettingsChange({ shiftEnd: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Tolerancia (min)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={
+                          activeOrg?.settings.toleranceMinutes ??
+                          DEFAULT_SETTINGS.toleranceMinutes
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({
+                            toleranceMinutes: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Hora extra apos</label>
+                      <input
+                        type="time"
+                        value={
+                          activeOrg?.settings.overtimeAfter ??
+                          DEFAULT_SETTINGS.overtimeAfter
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({ overtimeAfter: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Equipe minima</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={activeOrg?.settings.minStaff ?? DEFAULT_SETTINGS.minStaff}
+                        onChange={(event) =>
+                          handleSettingsChange({ minStaff: Number(event.target.value) })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Equipe maxima</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={activeOrg?.settings.maxStaff ?? DEFAULT_SETTINGS.maxStaff}
+                        onChange={(event) =>
+                          handleSettingsChange({ maxStaff: Number(event.target.value) })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Salario minimo (mensal)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={
+                          activeOrg?.settings.minWageMonthly ??
+                          DEFAULT_SETTINGS.minWageMonthly
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({
+                            minWageMonthly: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Horas mes (minimo)</label>
+                      <input
+                        type="number"
+                        min={0}
+                        value={
+                          activeOrg?.settings.minWageHours ?? DEFAULT_SETTINGS.minWageHours
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({
+                            minWageHours: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="config-section">
+                <h4>GPS e limpeza</h4>
+                <div className="form-grid">
+                  <div>
+                    <label>Geofence (nome do local)</label>
+                    <input
+                      type="text"
+                      value={
+                        activeOrg?.settings.geofenceName ?? DEFAULT_SETTINGS.geofenceName
+                      }
+                      onChange={(event) =>
+                        handleSettingsChange({ geofenceName: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Plus code</label>
+                      <input
+                        type="text"
+                        value={
+                          activeOrg?.settings.geofencePlusCode ??
+                          DEFAULT_SETTINGS.geofencePlusCode
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({
+                            geofencePlusCode: event.target.value,
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Raio (m)</label>
+                      <input
+                        type="number"
+                        min={10}
+                        value={
+                          activeOrg?.settings.geofenceRadius ??
+                          DEFAULT_SETTINGS.geofenceRadius
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({
+                            geofenceRadius: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Latitude</label>
+                      <input
+                        type="number"
+                        value={
+                          activeOrg?.settings.geofenceLat ?? DEFAULT_SETTINGS.geofenceLat
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({
+                            geofenceLat: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Longitude</label>
+                      <input
+                        type="number"
+                        value={
+                          activeOrg?.settings.geofenceLng ?? DEFAULT_SETTINGS.geofenceLng
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({
+                            geofenceLng: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label>Limpeza semanal (dia)</label>
+                    <select
+                      value={activeOrg?.settings.cleaningDay ?? DEFAULT_SETTINGS.cleaningDay}
+                      onChange={(event) =>
+                        handleSettingsChange({ cleaningDay: Number(event.target.value) })
+                      }
+                    >
+                      {WEEK_LABELS.map((label, index) => (
+                        <option key={label} value={(index + 1) % 7}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Horario</label>
+                      <input
+                        type="time"
+                        value={
+                          activeOrg?.settings.cleaningStart ??
+                          DEFAULT_SETTINGS.cleaningStart
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({ cleaningStart: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Fim</label>
+                      <input
+                        type="time"
+                        value={
+                          activeOrg?.settings.cleaningEnd ?? DEFAULT_SETTINGS.cleaningEnd
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({ cleaningEnd: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label>Nota limpeza</label>
+                    <input
+                      type="text"
+                      value={
+                        activeOrg?.settings.cleaningNote ??
+                        DEFAULT_SETTINGS.cleaningNote
+                      }
+                      onChange={(event) =>
+                        handleSettingsChange({ cleaningNote: event.target.value })
+                      }
+                    />
+                  </div>
+                </div>
+              </section>
+
+              <section className="config-section">
+                <h4>Empresas</h4>
+                <div className="org-list">
+                  {data.organizations.map((org) => (
+                    <div
+                      key={org.id}
+                      className={`org-item ${org.id === activeOrgId ? "is-active" : ""}`}
+                    >
+                      <div>
+                        <strong>{org.name}</strong>
+                        <span className="entry-note">
+                          Pessoas: {org.employees.length} | ID: {org.slug}
+                        </span>
+                      </div>
+                      <div className="org-actions">
+                        <button
+                          className="ghost ghost--small"
+                          type="button"
+                          onClick={() => handleSelectOrg(org.id)}
+                        >
+                          {org.id === activeOrgId ? "Ativa" : "Selecionar"}
+                        </button>
+                        <button
+                          className="ghost ghost--small"
+                          type="button"
+                          onClick={() => handleEditOrg(org)}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          className="ghost ghost--small"
+                          type="button"
+                          onClick={() => handleRemoveOrg(org.id)}
+                          disabled={data.organizations.length <= 1}
+                        >
+                          Remover
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="org-form">
+                  <h4>{orgForm.mode === "new" ? "Nova empresa" : "Editar empresa"}</h4>
+                  <div className="form-grid">
+                    <div>
+                      <label>Nome da empresa</label>
+                      <input
+                        type="text"
+                        value={orgForm.name}
+                        onChange={(event) =>
+                          setOrgForm((prev) => ({
+                            ...prev,
+                            name: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="action-grid">
+                    <button className="action-btn" type="button" onClick={handleSaveOrg}>
+                      {orgForm.mode === "new" ? "Adicionar empresa" : "Salvar empresa"}
+                    </button>
+                    <button
+                      className="ghost ghost--small"
+                      type="button"
+                      onClick={() => setOrgForm({ id: "", name: "", mode: "new" })}
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section className="config-section">
+                <h4>Cadastro de funcionarios</h4>
+                <div className="employee-search">
+                  <label>Buscar</label>
+                  <input
+                    type="text"
+                    value={employeeSearch}
+                    placeholder="Nome, email ou ID externo"
+                    onChange={(event) => setEmployeeSearch(event.target.value)}
+                  />
+                </div>
+                <div className="employee-list">
+                  {filteredEmployees.length ? (
+                    filteredEmployees.map((employee) => (
+                      <div key={employee.id} className="employee-card">
+                        <div className="employee-head">
+                          <div>
+                            <strong>{employee.name}</strong>
+                            <span className="employee-meta">
+                              {employee.role} | {employee.shiftStart}-{employee.shiftEnd}
+                            </span>
+                            <span className="employee-meta">
+                              Dias: {formatWorkDays(employee.workDays)}
+                            </span>
+                            {employee.externalId ? (
+                              <span className="employee-meta">
+                                ID externo: {employee.externalId}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="employee-tags">
+                            {employee.isTest ? (
+                              <span className="status-pill pending">Teste</span>
+                            ) : null}
+                            <span
+                              className={`status-pill ${
+                                employee.canPunch ? "approved" : "denied"
+                              }`}
+                            >
+                              {employee.canPunch ? "Ponto" : "Sem ponto"}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="employee-actions">
+                          <button
+                            className="ghost ghost--small"
+                            type="button"
+                            onClick={() => handleStartEditEmployee(employee)}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            className="ghost ghost--small"
+                            type="button"
+                            onClick={() =>
+                              handleCopyLink(employee.token, activeOrgId ?? undefined)
+                            }
+                          >
+                            {copiedToken === employee.token ? "Copiado" : "Copiar link"}
+                          </button>
+                          <button
+                            className="ghost ghost--small"
+                            type="button"
+                            onClick={() => handleRemoveEmployee(employee.id)}
+                            disabled={employee.id === currentEmployeeId}
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <span className="entry-note">Nenhum funcionario encontrado.</span>
+                  )}
+                </div>
+
+                <div className="employee-form">
+                  <h4>{employeeMode === "new" ? "Novo funcionario" : "Editar funcionario"}</h4>
+                  <div className="form-grid">
+                    <div>
+                      <label>Nome</label>
+                      <input
+                        type="text"
+                        value={employeeForm.name}
+                        onChange={(event) =>
+                          setEmployeeForm((prev) => ({
+                            ...prev,
+                            name: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Email</label>
+                      <input
+                        type="email"
+                        value={employeeForm.email}
+                        onChange={(event) =>
+                          setEmployeeForm((prev) => ({
+                            ...prev,
+                            email: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div className="inline-row">
+                      <div>
+                        <label>Cargo</label>
+                        <select
+                          value={employeeForm.role}
+                          onChange={(event) =>
+                            setEmployeeForm((prev) => ({
+                              ...prev,
+                              role: event.target.value as Role,
+                            }))
+                          }
+                        >
+                          <option value="staff">Staff</option>
+                          <option value="manager">Manager</option>
+                          <option value="support">Support</option>
+                          <option value="admin">Admin</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label>ID externo</label>
+                        <input
+                          type="text"
+                          value={employeeForm.externalId}
+                          onChange={(event) =>
+                            setEmployeeForm((prev) => ({
+                              ...prev,
+                              externalId: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="inline-row">
+                      <div>
+                        <label>Inicio</label>
+                        <input
+                          type="time"
+                          value={employeeForm.shiftStart}
+                          onChange={(event) =>
+                            setEmployeeForm((prev) => ({
+                              ...prev,
+                              shiftStart: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div>
+                        <label>Fim</label>
+                        <input
+                          type="time"
+                          value={employeeForm.shiftEnd}
+                          onChange={(event) =>
+                            setEmployeeForm((prev) => ({
+                              ...prev,
+                              shiftEnd: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="inline-row">
+                      <div>
+                        <label>Tipo de pagamento</label>
+                        <select
+                          value={employeeForm.payType}
+                          onChange={(event) =>
+                            setEmployeeForm((prev) => ({
+                              ...prev,
+                              payType: event.target.value as PayInfo["type"],
+                            }))
+                          }
+                        >
+                          <option value="daily">Diaria</option>
+                          <option value="monthly">Mensal</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label>Valor</label>
+                        <input
+                          type="number"
+                          value={employeeForm.payAmount}
+                          onChange={(event) =>
+                            setEmployeeForm((prev) => ({
+                              ...prev,
+                              payAmount: Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label>Nota pagamento</label>
+                      <input
+                        type="text"
+                        value={employeeForm.payNote}
+                        onChange={(event) =>
+                          setEmployeeForm((prev) => ({
+                            ...prev,
+                            payNote: event.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Permitir ponto</label>
+                      <div className="toggle-row">
+                        <button
+                          className={`toggle-btn ${
+                            employeeForm.canPunch ? "is-active" : ""
+                          }`}
+                          type="button"
+                          onClick={() =>
+                            setEmployeeForm((prev) => ({
+                              ...prev,
+                              canPunch: true,
+                            }))
+                          }
+                        >
+                          Sim
+                        </button>
+                        <button
+                          className={`toggle-btn ${
+                            !employeeForm.canPunch ? "is-active" : ""
+                          }`}
+                          type="button"
+                          onClick={() =>
+                            setEmployeeForm((prev) => ({
+                              ...prev,
+                              canPunch: false,
+                            }))
+                          }
+                        >
+                          Nao
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <label>Escala</label>
+                      <div className="weekday-grid">
+                        {WEEK_LABELS.map((label, index) => {
+                          const dayIndex = (index + 1) % 7;
+                          const isActive = employeeForm.workDays.includes(dayIndex);
+                          return (
+                            <button
+                              key={label}
+                              className={`weekday-pill ${isActive ? "is-active" : ""}`}
+                              type="button"
+                              onClick={() => toggleWorkDay(dayIndex)}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div>
+                      <label>Conta de teste</label>
+                      <div className="toggle-row">
+                        <button
+                          className={`toggle-btn ${
+                            employeeForm.isTest ? "is-active" : ""
+                          }`}
+                          type="button"
+                          onClick={() =>
+                            setEmployeeForm((prev) => ({
+                              ...prev,
+                              isTest: true,
+                            }))
+                          }
+                        >
+                          Sim
+                        </button>
+                        <button
+                          className={`toggle-btn ${
+                            !employeeForm.isTest ? "is-active" : ""
+                          }`}
+                          type="button"
+                          onClick={() =>
+                            setEmployeeForm((prev) => ({
+                              ...prev,
+                              isTest: false,
+                            }))
+                          }
+                        >
+                          Nao
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="action-grid">
+                    <button
+                      className="action-btn"
+                      type="button"
+                      onClick={handleSaveEmployee}
+                    >
+                      {employeeMode === "new"
+                        ? "Adicionar funcionario"
+                        : "Salvar ajustes"}
+                    </button>
+                    <button
+                      className="ghost ghost--small"
+                      type="button"
+                      onClick={resetEmployeeForm}
+                    >
+                      Limpar
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              <section className="config-section">
+                <h4>Banco de dados</h4>
+                <p className="entry-note">
+                  Use apenas se precisar forcar a criacao ou sincronizacao do banco.
+                </p>
+                <div className="action-grid">
+                  <button className="action-btn" type="button" onClick={handleForceSave}>
+                    Inicializar banco
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

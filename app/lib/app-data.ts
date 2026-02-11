@@ -101,6 +101,10 @@ export type Settings = {
   cleaningEnd: string;
   cleaningNote: string;
   cleaningParticipants: string[];
+  minStaff: number;
+  maxStaff: number;
+  minWageMonthly: number;
+  minWageHours: number;
 };
 
 export type Organization = {
@@ -159,6 +163,10 @@ export const DEFAULT_SETTINGS: Settings = {
   cleaningEnd: "12:00",
   cleaningNote: "2-3h (1x/semana, a combinar)",
   cleaningParticipants: ["ayra", "nathyeli"],
+  minStaff: 2,
+  maxStaff: 4,
+  minWageMonthly: 1621,
+  minWageHours: 220,
 };
 
 export const DEFAULT_EMPLOYEES: Employee[] = [
