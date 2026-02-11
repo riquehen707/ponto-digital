@@ -7,8 +7,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: "Ponto digital com geolocalizacao e escala da equipe.",
     start_url: "/",
     display: "standalone",
-    background_color: "#f6f1e8",
-    theme_color: "#e07a5f",
+    background_color: "#f1f6f4",
+    theme_color: "#ff7a59",
     icons: [
       {
         src: "/icon-192.png",

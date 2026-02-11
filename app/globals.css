@@ -258,9 +258,9 @@ select:focus-visible {
   z-index: 3;
   padding: 8px 14px;
   border-radius: 999px;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(var(--cool-rgb), 0.25);
   background: var(--panel-strong);
-  color: var(--ink);
+  color: var(--accent-cool);
   font-size: 0.85rem;
   box-shadow: 0 12px 30px rgba(29, 28, 26, 0.12);
   backdrop-filter: blur(12px);
@@ -328,7 +328,11 @@ select:focus-visible {
   inset: 0 auto 0 0;
   width: min(440px, 92vw);
   padding: 24px 20px 32px;
-  background: var(--panel-strong);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.96),
+    rgba(255, 255, 255, 0.88)
+  );
   border-right: 1px solid var(--border);
   box-shadow: 0 18px 50px rgba(29, 28, 26, 0.18);
   transform: translateX(-110%);
@@ -451,13 +455,37 @@ select:focus-visible {
 }
 
 .tool-card {
-  background: rgba(255, 255, 255, 0.86);
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.96),
+    rgba(255, 255, 255, 0.82)
+  );
   border: 1px solid var(--border);
   border-radius: 18px;
   padding: 16px;
   box-shadow: 0 10px 30px rgba(29, 28, 26, 0.08);
   animation: slideUp 0.4s ease both;
   scroll-margin-top: 18px;
+}
+
+.tool-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    rgba(var(--accent-rgb), 0.9),
+    rgba(var(--cool-rgb), 0.85)
+  );
+  opacity: 0.65;
+}
+
+.tool-card > * {
+  position: relative;
+  z-index: 1;
 }
 
 .page--menu-open .tool-card:nth-child(1) {
@@ -1509,6 +1537,7 @@ select:focus-visible {
   padding: 12px;
   display: grid;
   gap: 4px;
+  box-shadow: 0 8px 18px rgba(29, 28, 26, 0.06);
 }
 
 .wage-compare {
@@ -1562,18 +1591,29 @@ select:focus-visible {
 .action-btn {
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid var(--border);
-  background: #fff;
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  background: linear-gradient(
+    135deg,
+    rgba(var(--accent-rgb), 0.95),
+    var(--accent-strong)
+  );
   font-size: 0.85rem;
   font-weight: 600;
-  color: var(--ink);
-  box-shadow: 0 6px 16px rgba(29, 28, 26, 0.08);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(var(--accent-rgb), 0.25);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.2s ease;
 }
 
 .action-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 10px 18px rgba(29, 28, 26, 0.12);
+  box-shadow: 0 14px 28px rgba(var(--accent-rgb), 0.3);
+  filter: brightness(1.02);
+}
+
+.action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 @keyframes float {
@@ -1917,7 +1957,11 @@ select:focus-visible {
   padding: 12px;
   border-radius: 14px;
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.9);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.96),
+    rgba(255, 255, 255, 0.88)
+  );
   display: grid;
   gap: 10px;
 }
@@ -1938,7 +1982,8 @@ select:focus-visible {
 .metric {
   padding: 8px;
   border-radius: 10px;
-  background: rgba(29, 28, 26, 0.05);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border);
   display: grid;
   gap: 4px;
   font-size: 0.8rem;
