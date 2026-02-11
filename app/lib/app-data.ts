@@ -11,7 +11,7 @@ export type GeoInfo = {
 export type Role = "admin" | "staff" | "manager" | "support";
 
 export type PayInfo = {
-  type: "daily" | "monthly";
+  type: "daily" | "monthly" | "hourly";
   amount: number;
   note?: string;
 };
@@ -91,6 +91,11 @@ export type Settings = {
   shiftEnd: string;
   toleranceMinutes: number;
   overtimeAfter: string;
+  locale: string;
+  currency: string;
+  timezone: string;
+  payrollCycleStartDay: number;
+  payrollCycleLengthDays: number;
   geofenceName: string;
   geofencePlusCode: string;
   geofenceLat: number;
@@ -153,6 +158,11 @@ export const DEFAULT_SETTINGS: Settings = {
   shiftEnd: "22:00",
   toleranceMinutes: 5,
   overtimeAfter: "22:00",
+  locale: "pt-BR",
+  currency: "BRL",
+  timezone: "America/Sao_Paulo",
+  payrollCycleStartDay: 1,
+  payrollCycleLengthDays: 30,
   geofenceName: "VH89+92 Teresopolis, Alagoinhas - BA",
   geofencePlusCode: "VH89+92",
   geofenceLat: -12.1340625,
@@ -293,10 +303,14 @@ export const DEFAULT_DATA: AppData = {
   currentOrgId: DEFAULT_ORG.id,
 };
 
-export const formatCurrency = (value: number) =>
-  value.toLocaleString("pt-BR", {
+export const formatCurrency = (
+  value: number,
+  locale: string = "pt-BR",
+  currency: string = "BRL"
+) =>
+  value.toLocaleString(locale, {
     style: "currency",
-    currency: "BRL",
+    currency,
     minimumFractionDigits: 2,
   });
 

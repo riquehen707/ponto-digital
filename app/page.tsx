@@ -163,7 +163,14 @@ export default function Home() {
     : currentEmployee?.name || "Usuario";
 
   const personalProfile = currentEmployee?.role === "staff" ? currentEmployee : null;
-  const geofence = activeOrg?.settings ?? DEFAULT_SETTINGS;
+  const activeSettings = activeOrg?.settings ?? DEFAULT_SETTINGS;
+  const geofence = activeSettings;
+  const locale = activeSettings.locale ?? DEFAULT_SETTINGS.locale;
+  const currency = activeSettings.currency ?? DEFAULT_SETTINGS.currency;
+  const formatMoney = useCallback(
+    (value: number) => formatCurrency(value, locale, currency),
+    [locale, currency]
+  );
 
   const teamAccounts = activeOrg
     ? activeOrg.employees.filter((employee) => employee.canPunch && !employee.isTest)
@@ -1102,31 +1109,31 @@ export default function Home() {
 
   const timeString = useMemo(
     () =>
-      now.toLocaleTimeString("pt-BR", {
+      now.toLocaleTimeString(locale, {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
       }),
-    [now]
+    [now, locale]
   );
 
   const dateString = useMemo(
     () =>
-      now.toLocaleDateString("pt-BR", {
+      now.toLocaleDateString(locale, {
         weekday: "long",
         day: "2-digit",
         month: "long",
       }),
-    [now]
+    [now, locale]
   );
 
   const monthLabel = useMemo(
     () =>
-      viewMonth.toLocaleDateString("pt-BR", {
+      viewMonth.toLocaleDateString(locale, {
         month: "long",
         year: "numeric",
       }),
-    [viewMonth]
+    [viewMonth, locale]
   );
 
   const reportStart = useMemo(() => getRangeStart(reportRange), [reportRange]);
@@ -1267,6 +1274,16 @@ export default function Home() {
     teamRequestMap,
     now,
   ]);
+
+  const calendarStats = useMemo(() => {
+    const daysInMonth = calendarDays.filter((day) => day.inMonth);
+    return {
+      pending: daysInMonth.reduce((acc, day) => acc + day.pendingCount, 0),
+      coverageLow: daysInMonth.filter((day) => day.coverage === "low").length,
+      coverageHigh: daysInMonth.filter((day) => day.coverage === "high").length,
+      workDays: daysInMonth.filter((day) => day.dayType === "work").length,
+    };
+  }, [calendarDays]);
 
   function getShiftMinutes(employee: Employee) {
     const startValue =
@@ -1555,6 +1572,12 @@ export default function Home() {
     [activeOrg, reportStart, pointsByUser, attendanceByUser, now]
   );
 
+  const reportById = useMemo(() => {
+    const map = new Map<string, (typeof reportRows)[number]>();
+    reportRows.forEach((row) => map.set(row.id, row));
+    return map;
+  }, [reportRows]);
+
   const teamDashboard = useMemo(() => {
     return reportRows.reduce(
       (acc, row) => {
@@ -1658,6 +1681,53 @@ export default function Home() {
     return totals;
   }, [paymentsInRange]);
 
+  const paymentTotals = useMemo(() => {
+    return paymentsInRange.reduce(
+      (acc, payment) => {
+        if (payment.status === "paid") {
+          acc.paid += payment.amount;
+        } else {
+          acc.planned += payment.amount;
+        }
+        return acc;
+      },
+      { paid: 0, planned: 0 }
+    );
+  }, [paymentsInRange]);
+
+  const payrollSnapshot = useMemo(() => {
+    return (activeOrg?.employees ?? []).reduce(
+      (acc, employee) => {
+        if (!employee.pay) {
+          return acc;
+        }
+        const report = reportById.get(employee.id);
+        let estimate = 0;
+        if (employee.pay.type === "daily") {
+          estimate = (report?.daysWorked ?? 0) * employee.pay.amount;
+          acc.daily += estimate;
+        } else if (employee.pay.type === "hourly") {
+          estimate = ((report?.totalMinutes ?? 0) / 60) * employee.pay.amount;
+          acc.hourly += estimate;
+        } else {
+          estimate = employee.pay.amount;
+          acc.monthly += estimate;
+        }
+        acc.estimated += estimate;
+        acc.count += 1;
+        return acc;
+      },
+      { estimated: 0, daily: 0, hourly: 0, monthly: 0, count: 0 }
+    );
+  }, [activeOrg, reportById]);
+
+  const reportRangeLabel =
+    reportRange === "week"
+      ? "Semana atual"
+      : reportRange === "30d"
+      ? "Ultimos 30 dias"
+      : "Mes atual";
+
   const paymentsCsv = useMemo(() => {
     const header = [
       "empresa",
@@ -1715,8 +1785,8 @@ export default function Home() {
   }, [staffPayments]);
 
   const minWageMonthly =
-    activeOrg?.settings.minWageMonthly ?? DEFAULT_SETTINGS.minWageMonthly;
-  const minWageHours = activeOrg?.settings.minWageHours ?? DEFAULT_SETTINGS.minWageHours;
+    activeSettings.minWageMonthly ?? DEFAULT_SETTINGS.minWageMonthly;
+  const minWageHours = activeSettings.minWageHours ?? DEFAULT_SETTINGS.minWageHours;
   const minWageHourly =
     minWageMonthly > 0 && minWageHours > 0 ? minWageMonthly / minWageHours : null;
 
@@ -1731,6 +1801,9 @@ export default function Home() {
         return null;
       }
       return pay.amount / (minutes / 60);
+    }
+    if (pay.type === "hourly") {
+      return pay.amount;
     }
     if (pay.type === "monthly") {
       if (!minWageHours) {
@@ -2217,6 +2290,17 @@ export default function Home() {
     approved: "Aprovada",
     denied: "Negada",
   };
+  const payTypeLabels: Record<PayInfo["type"], string> = {
+    daily: "Diaria",
+    monthly: "Mensal",
+    hourly: "Por hora",
+  };
+  const paymentKindLabels: Record<PaymentKind, string> = {
+    daily: "Diaria",
+    salary: "Mensal",
+    bonus: "Bonus",
+    adjustment: "Ajuste",
+  };
 
   const currentPoints = currentEmployee
     ? pointsByUser.get(currentEmployee.id) ?? 0
@@ -2320,175 +2404,230 @@ export default function Home() {
 
         <div className="menu-grid">
           <section className="tool-card" id="calendar-card">
-            <div className="card-header">
+            <div className="card-header calendar-header">
               <div>
                 <h3>Calendario da equipe</h3>
                 <p>Escala, folgas e agenda.</p>
               </div>
-              <div className="month-nav">
-                <button
-                  className="ghost ghost--icon"
-                  type="button"
-                  onClick={handlePrevMonth}
-                  aria-label="Mes anterior"
-                >
-                  {"<"}
-                </button>
-                <span className="month-label">{monthLabel}</span>
-                <button
-                  className="ghost ghost--icon"
-                  type="button"
-                  onClick={handleNextMonth}
-                  aria-label="Proximo mes"
-                >
-                  {">"}
-                </button>
-              </div>
-            </div>
-
-            <div className="calendar-shell">
-              <div className="calendar-weekdays">
-                {WEEK_LABELS.map((label) => (
-                  <span key={label}>{label}</span>
-                ))}
-              </div>
-              <div className="calendar-days">
-                {calendarDays.map((day) => (
+              <div className="calendar-controls">
+                <div className="month-nav">
                   <button
-                    key={day.key}
-                    className={`calendar-day ${day.dayType} ${
-                      day.inMonth ? "" : "is-outside"
-                    } ${day.isToday ? "is-today" : ""} ${
-                      day.isSelected ? "is-selected" : ""
-                    } ${day.requestStatus ? `request-${day.requestStatus}` : ""} ${
-                      isAdmin ? `coverage-${day.coverage}` : ""
-                    } ${day.pendingCount ? "has-requests" : ""}`}
+                    className="ghost ghost--icon"
                     type="button"
-                    onClick={() => handleSelectDate(day.date)}
-                    disabled={!day.inMonth}
+                    onClick={handlePrevMonth}
+                    aria-label="Mes anterior"
                   >
-                    <span className="calendar-number">{day.date.getDate()}</span>
-                    {isAdmin ? (
-                      <span className="calendar-count">{day.availableCount}</span>
-                    ) : null}
-                    {day.pendingCount ? (
-                      <span className="calendar-request">{day.pendingCount}</span>
-                    ) : null}
-                    {day.requestStatus ? (
-                      <span className={`request-dot ${day.requestStatus}`} />
-                    ) : null}
+                    {"<"}
                   </button>
-                ))}
+                  <span className="month-label">{monthLabel}</span>
+                  <button
+                    className="ghost ghost--icon"
+                    type="button"
+                    onClick={handleNextMonth}
+                    aria-label="Proximo mes"
+                  >
+                    {">"}
+                  </button>
+                </div>
+                {isAdmin ? (
+                  <div className="calendar-stats">
+                    <div>
+                      <span>Equipe baixa</span>
+                      <strong>{calendarStats.coverageLow}</strong>
+                    </div>
+                    <div>
+                      <span>Equipe alta</span>
+                      <strong>{calendarStats.coverageHigh}</strong>
+                    </div>
+                    <div>
+                      <span>Folgas</span>
+                      <strong>{calendarStats.pending}</strong>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 
-            <div className="calendar-legend">
-              <div className="legend-item">
-                <span className="legend-dot work" />
-                Trabalho
-              </div>
-              <div className="legend-item">
-                <span className="legend-dot off" />
-                Folga
-              </div>
-              {isAdmin ? (
-                <>
-                  <div className="legend-item">
-                    <span className="legend-dot coverage-low" />
-                    Equipe baixa
+            <div className="calendar-layout">
+              <div className="calendar-panel">
+                <div className="calendar-shell">
+                  <div className="calendar-weekdays">
+                    {WEEK_LABELS.map((label) => (
+                      <span key={label}>{label}</span>
+                    ))}
                   </div>
-                  <div className="legend-item">
-                    <span className="legend-dot coverage-high" />
-                    Equipe alta
-                  </div>
-                </>
-              ) : null}
-              <div className="legend-item">
-                <span className="legend-dot request" />
-                Folga solicitada
-              </div>
-            </div>
-
-            <div className="selected-date">
-              <div>
-                <span>Selecionado</span>
-                <strong>{selectedDate.toLocaleDateString("pt-BR")}</strong>
-              </div>
-              <span className={`day-pill ${selectedDayType}`}>
-                {selectedDayType === "work" ? "Trabalho" : "Folga"}
-              </span>
-            </div>
-
-            <div className="day-details">
-              <div className="personal-shift">
-                <span>{personalProfile ? "Seu turno" : "Turno padrao"}</span>
-                <strong>
-                  {personalProfile
-                    ? `${personalProfile.shiftStart}-${personalProfile.shiftEnd}`
-                    : `${
-                        activeOrg?.settings.shiftStart ?? DEFAULT_SETTINGS.shiftStart
-                      }-${
-                        activeOrg?.settings.shiftEnd ?? DEFAULT_SETTINGS.shiftEnd
-                      }`}
-                </strong>
-              </div>
-              {personalProfile ? (
-                <span className="entry-note">
-                  Dias: {formatWorkDays(personalProfile.workDays)}
-                </span>
-              ) : null}
-              {isAdmin && selectedDaySummary ? (
-                <div className={`coverage-summary ${selectedDaySummary.coverage}`}>
-                  <div>
-                    <span>Equipe prevista</span>
-                    <strong>
-                      {selectedDaySummary.availableEmployees.length}/
-                      {selectedDaySummary.scheduledEmployees.length}
-                    </strong>
-                    <span className="entry-note">
-                      Meta: {selectedDaySummary.minStaff}-{selectedDaySummary.maxStaff}
-                    </span>
-                  </div>
-                  <div>
-                    <span>Horas previstas</span>
-                    <strong>{formatMinutes(selectedDaySummary.expectedMinutes)}</strong>
-                    {selectedDaySummary.pendingCount ? (
-                      <span className="entry-note">
-                        {selectedDaySummary.pendingCount} folga pendente
-                        {selectedDaySummary.pendingCount > 1 ? "s" : ""}
-                      </span>
-                    ) : null}
+                  <div className="calendar-days">
+                    {calendarDays.map((day) => (
+                      <button
+                        key={day.key}
+                        className={`calendar-day ${day.dayType} ${
+                          day.inMonth ? "" : "is-outside"
+                        } ${day.isToday ? "is-today" : ""} ${
+                          day.isSelected ? "is-selected" : ""
+                        } ${day.requestStatus ? `request-${day.requestStatus}` : ""} ${
+                          isAdmin ? `coverage-${day.coverage}` : ""
+                        } ${day.pendingCount ? "has-requests" : ""}`}
+                        type="button"
+                        onClick={() => handleSelectDate(day.date)}
+                        disabled={!day.inMonth}
+                      >
+                        <div className="calendar-top">
+                          <span className="calendar-number">
+                            {day.date.getDate()}
+                          </span>
+                          <div className="calendar-top-right">
+                            {day.pendingCount ? (
+                              <span className="calendar-request">
+                                {day.pendingCount}
+                              </span>
+                            ) : null}
+                            {day.requestStatus ? (
+                              <span className={`request-dot ${day.requestStatus}`} />
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="calendar-bottom">
+                          {isAdmin ? (
+                            <span className="calendar-count">
+                              {day.availableCount}/{day.scheduledCount}
+                            </span>
+                          ) : null}
+                          {isAdmin && day.workerNames.length ? (
+                            <span className="calendar-workers">
+                              {day.workerNames.slice(0, 2).map((name) => (
+                                <span key={name} className="calendar-initial">
+                                  {name.trim().slice(0, 1).toUpperCase()}
+                                </span>
+                              ))}
+                              {day.workerNames.length > 2 ? (
+                                <span className="calendar-more">
+                                  +{day.workerNames.length - 2}
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : null}
+                        </div>
+                        <span className="calendar-bar" />
+                      </button>
+                    ))}
                   </div>
                 </div>
-              ) : null}
-              <div className="day-entries">
-                {scheduleEntries.length ? (
-                  scheduleEntries.map((entry) => (
-                    <div
-                      key={`${entry.title}-${entry.time}`}
-                      className={`day-entry ${entry.tone}`}
-                    >
-                      <div className="day-entry-header">
-                        <span>{entry.title}</span>
-                        <span>{entry.time}</span>
+
+                <div className="calendar-legend">
+                  <div className="legend-item">
+                    <span className="legend-dot work" />
+                    Trabalho
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-dot off" />
+                    Folga
+                  </div>
+                  {isAdmin ? (
+                    <>
+                      <div className="legend-item">
+                        <span className="legend-dot coverage-low" />
+                        Equipe baixa
                       </div>
-                      <div className="schedule-badges">
-                        {entry.people.map((person) => (
-                          <span key={person} className="badge">
-                            {person}
-                          </span>
-                        ))}
+                      <div className="legend-item">
+                        <span className="legend-dot coverage-high" />
+                        Equipe alta
                       </div>
-                      {entry.note ? (
-                        <span className="entry-note">{entry.note}</span>
-                      ) : null}
-                    </div>
-                  ))
-                ) : (
-                  <span className="entry-note">
-                    Sem turnos definidos para este dia.
+                    </>
+                  ) : null}
+                  <div className="legend-item">
+                    <span className="legend-dot request" />
+                    Folga solicitada
+                  </div>
+                </div>
+              </div>
+
+              <div className="calendar-info">
+                <div className="selected-date">
+                  <div>
+                    <span>Selecionado</span>
+                    <strong>{selectedDate.toLocaleDateString(locale)}</strong>
+                  </div>
+                  <span className={`day-pill ${selectedDayType}`}>
+                    {selectedDayType === "work" ? "Trabalho" : "Folga"}
                   </span>
-                )}
+                </div>
+
+                <div className="day-details">
+                  <div className="personal-shift">
+                    <span>{personalProfile ? "Seu turno" : "Turno padrao"}</span>
+                    <strong>
+                      {personalProfile
+                        ? `${personalProfile.shiftStart}-${personalProfile.shiftEnd}`
+                        : `${
+                            activeOrg?.settings.shiftStart ??
+                            DEFAULT_SETTINGS.shiftStart
+                          }-${
+                            activeOrg?.settings.shiftEnd ?? DEFAULT_SETTINGS.shiftEnd
+                          }`}
+                    </strong>
+                  </div>
+                  {personalProfile ? (
+                    <span className="entry-note">
+                      Dias: {formatWorkDays(personalProfile.workDays)}
+                    </span>
+                  ) : null}
+                  {isAdmin && selectedDaySummary ? (
+                    <div className={`coverage-summary ${selectedDaySummary.coverage}`}>
+                      <div>
+                        <span>Equipe prevista</span>
+                        <strong>
+                          {selectedDaySummary.availableEmployees.length}/
+                          {selectedDaySummary.scheduledEmployees.length}
+                        </strong>
+                        <span className="entry-note">
+                          Meta: {selectedDaySummary.minStaff}-
+                          {selectedDaySummary.maxStaff}
+                        </span>
+                      </div>
+                      <div>
+                        <span>Horas previstas</span>
+                        <strong>
+                          {formatMinutes(selectedDaySummary.expectedMinutes)}
+                        </strong>
+                        {selectedDaySummary.pendingCount ? (
+                          <span className="entry-note">
+                            {selectedDaySummary.pendingCount} folga pendente
+                            {selectedDaySummary.pendingCount > 1 ? "s" : ""}
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="day-entries">
+                    {scheduleEntries.length ? (
+                      scheduleEntries.map((entry) => (
+                        <div
+                          key={`${entry.title}-${entry.time}`}
+                          className={`day-entry ${entry.tone}`}
+                        >
+                          <div className="day-entry-header">
+                            <span>{entry.title}</span>
+                            <span>{entry.time}</span>
+                          </div>
+                          <div className="schedule-badges">
+                            {entry.people.map((person) => (
+                              <span key={person} className="badge">
+                                {person}
+                              </span>
+                            ))}
+                          </div>
+                          {entry.note ? (
+                            <span className="entry-note">{entry.note}</span>
+                          ) : null}
+                        </div>
+                      ))
+                    ) : (
+                      <span className="entry-note">
+                        Sem turnos definidos para este dia.
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -2499,7 +2638,7 @@ export default function Home() {
             <div className="selected-date">
               <div>
                 <span>Dia escolhido</span>
-                <strong>{selectedDate.toLocaleDateString("pt-BR")}</strong>
+                <strong>{selectedDate.toLocaleDateString(locale)}</strong>
               </div>
               {selectedRequest ? (
                 <span className={`status-pill ${selectedRequest.status}`}>
@@ -2542,13 +2681,11 @@ export default function Home() {
                       <strong>
                         {new Date(
                           `${request.date}T00:00:00`
-                        ).toLocaleDateString("pt-BR")}
+                        ).toLocaleDateString(locale)}
                       </strong>
                       <span className="entry-note">
                         Solicitado em {request.createdAt
-                          ? new Date(request.createdAt).toLocaleDateString(
-                              "pt-BR"
-                            )
+                          ? new Date(request.createdAt).toLocaleDateString(locale)
                           : "data nao registrada"}
                       </span>
                     </div>
@@ -2592,7 +2729,7 @@ export default function Home() {
               <span>Plus code: {geofence.geofencePlusCode}</span>
               <span>
                 Ultima leitura: {geoInfo.updatedAt
-                  ? geoInfo.updatedAt.toLocaleTimeString("pt-BR")
+                  ? geoInfo.updatedAt.toLocaleTimeString(locale)
                   : "Sem leitura"}
               </span>
               {geoInfo.distance !== undefined ? (
@@ -2749,7 +2886,7 @@ export default function Home() {
                 <div className="stat">
                   <span className="stat-label">Pago</span>
                   <span className="stat-value">
-                    {formatCurrency(staffPaymentTotals.paid)}
+                    {formatMoney(staffPaymentTotals.paid)}
                   </span>
                   <span className="stat-note">
                     Lancamentos: {staffPaymentTotals.count}
@@ -2758,21 +2895,21 @@ export default function Home() {
                 <div className="stat">
                   <span className="stat-label">Previsto</span>
                   <span className="stat-value">
-                    {formatCurrency(staffPaymentTotals.planned)}
+                    {formatMoney(staffPaymentTotals.planned)}
                   </span>
                   <span className="stat-note">Proximos pagamentos</span>
                 </div>
                 <div className="stat">
                   <span className="stat-label">Seu valor/hora</span>
                   <span className="stat-value">
-                    {staffHourlyRate ? formatCurrency(staffHourlyRate) : "--"}
+                    {staffHourlyRate ? formatMoney(staffHourlyRate) : "--"}
                   </span>
                   <span className="stat-note">Base na sua escala</span>
                 </div>
                 <div className="stat">
                   <span className="stat-label">Hora do minimo</span>
                   <span className="stat-value">
-                    {minWageHourly ? formatCurrency(minWageHourly) : "--"}
+                    {minWageHourly ? formatMoney(minWageHourly) : "--"}
                   </span>
                   <span className="stat-note">
                     {minWageHourly
@@ -2790,14 +2927,36 @@ export default function Home() {
                   </span>
                 </div>
               </div>
+              {wageRatio ? (
+                <div className="wage-compare">
+                  <div className="wage-track">
+                    <span
+                      className="wage-fill"
+                      style={{
+                        width: `${Math.min(wageRatio, 1.5) * 100}%`,
+                      }}
+                    />
+                  </div>
+                  <span className="entry-note">Meta: 100% do salario minimo.</span>
+                </div>
+              ) : (
+                <span className="entry-note">
+                  Defina o salario minimo em configuracoes para comparar.
+                </span>
+              )}
               <div className="payment-list compact">
                 {staffPayments.length ? (
                   staffPayments.slice(0, 6).map((payment) => (
                     <div key={payment.id} className="payment-item">
                       <div>
-                        <strong>{payment.date}</strong>
+                        <strong>
+                          {new Date(
+                            `${payment.date}T00:00:00`
+                          ).toLocaleDateString(locale)}
+                        </strong>
                         <span className="payment-meta">
-                          {payment.kind} Â- {payment.method}
+                          {paymentKindLabels[payment.kind]} ·{" "}
+                          {payment.method || "Metodo nao informado"}
                         </span>
                       </div>
                       <div className="payment-actions">
@@ -2808,7 +2967,7 @@ export default function Home() {
                         >
                           {payment.status === "paid" ? "Pago" : "Previsto"}
                         </span>
-                        <strong>{formatCurrency(payment.amount)}</strong>
+                        <strong>{formatMoney(payment.amount)}</strong>
                       </div>
                     </div>
                   ))
@@ -2985,7 +3144,7 @@ export default function Home() {
                             <span className="entry-note">
                               {new Date(
                                 `${request.date}T00:00:00`
-                              ).toLocaleDateString("pt-BR")}
+                              ).toLocaleDateString(locale)}
                             </span>
                           </div>
                           <div className="timeoff-actions">
@@ -3068,7 +3227,7 @@ export default function Home() {
                         <div>
                           <strong>{shift.name}</strong>
                           <span className="entry-note">
-                            Inicio {shift.startedAt.toLocaleTimeString("pt-BR")}
+                            Inicio {shift.startedAt.toLocaleTimeString(locale)}
                           </span>
                         </div>
                         <span className="status-pill approved">Em turno</span>
@@ -3081,7 +3240,7 @@ export default function Home() {
                         <div className="metric">
                           <span className="stat-label">Inicio</span>
                           <strong>
-                            {shift.startedAt.toLocaleDateString("pt-BR")}
+                            {shift.startedAt.toLocaleDateString(locale)}
                           </strong>
                         </div>
                       </div>
@@ -3388,34 +3547,78 @@ export default function Home() {
                 <span className="admin-pill">Folha e pagamentos</span>
               </div>
               <p>Resumo da folha e registros financeiros.</p>
+              <div className="finance-highlights">
+                <div className="highlight-card">
+                  <span>Pago no periodo</span>
+                  <strong>{formatMoney(paymentTotals.paid)}</strong>
+                  <span className="entry-note">{reportRangeLabel}</span>
+                </div>
+                <div className="highlight-card">
+                  <span>Previsto</span>
+                  <strong>{formatMoney(paymentTotals.planned)}</strong>
+                  <span className="entry-note">Lancamentos pendentes</span>
+                </div>
+                <div className="highlight-card">
+                  <span>Estimativa folha</span>
+                  <strong>{formatMoney(payrollSnapshot.estimated)}</strong>
+                  <span className="entry-note">
+                    Fixos {formatMoney(payrollSnapshot.monthly)} | Variavel{" "}
+                    {formatMoney(payrollSnapshot.daily + payrollSnapshot.hourly)}
+                  </span>
+                </div>
+              </div>
               <details className="finance-details">
                 <summary>Folha de pagamento</summary>
-                <div className="admin-payroll compact">
+                <span className="entry-note">Base: {reportRangeLabel}</span>
+                <div className="payroll-grid">
                   {(activeOrg?.employees ?? []).filter((employee) => employee.pay).length ? (
                     (activeOrg?.employees ?? [])
                       .filter((employee) => employee.pay)
-                      .map((employee) => (
-                        <div key={employee.id} className="payroll-item compact">
-                          <div>
-                            <strong>{employee.name}</strong>
-                            <span className="payroll-meta">
-                              {employee.pay?.type === "monthly" ? "Mensal" : "Diaria"}
-                            </span>
-                            <span className="payroll-meta">
-                              Turno {employee.shiftStart}-{employee.shiftEnd}
-                            </span>
-                            <span className="payroll-meta">
-                              Escala {formatWorkDays(employee.workDays)}
-                            </span>
+                      .map((employee) => {
+                        const report = reportById.get(employee.id);
+                        let estimate = employee.pay?.amount ?? 0;
+                        if (employee.pay?.type === "daily") {
+                          estimate = (report?.daysWorked ?? 0) * employee.pay.amount;
+                        }
+                        if (employee.pay?.type === "hourly") {
+                          estimate =
+                            ((report?.totalMinutes ?? 0) / 60) * employee.pay.amount;
+                        }
+                        return (
+                          <div key={employee.id} className="payroll-card">
+                            <div className="payroll-head">
+                              <div>
+                                <strong>{employee.name}</strong>
+                                <span className="payroll-meta">
+                                  {employee.pay
+                                    ? payTypeLabels[employee.pay.type]
+                                    : "Sem tipo"}
+                                </span>
+                              </div>
+                              <span className="payroll-amount">
+                                {employee.pay ? formatMoney(employee.pay.amount) : "-"}
+                              </span>
+                            </div>
+                            <div className="payroll-row">
+                              <span>Turno</span>
+                              <strong>
+                                {employee.shiftStart}-{employee.shiftEnd}
+                              </strong>
+                            </div>
+                            <div className="payroll-row">
+                              <span>Escala</span>
+                              <strong>{formatWorkDays(employee.workDays)}</strong>
+                            </div>
+                            <div className="payroll-row">
+                              <span>Periodo</span>
+                              <strong>{formatMoney(estimate)}</strong>
+                            </div>
                             {employee.pay?.note ? (
                               <span className="payroll-note">{employee.pay.note}</span>
                             ) : null}
                           </div>
-                          <div className="payroll-amount">
-                            {employee.pay ? formatCurrency(employee.pay.amount) : "-"}
-                          </div>
-                        </div>
-                      ))
+                        );
+                      })
                   ) : (
                     <span className="entry-note">Sem valores cadastrados.</span>
                   )}
@@ -3438,8 +3641,8 @@ export default function Home() {
                           Lancamentos: {totals.count}
                         </span>
                         <div className="payment-values">
-                          <span>Pago {formatCurrency(totals.paid)}</span>
-                          <span>Previsto {formatCurrency(totals.planned)}</span>
+                          <span>Pago {formatMoney(totals.paid)}</span>
+                          <span>Previsto {formatMoney(totals.planned)}</span>
                         </div>
                       </div>
                     );
@@ -3604,7 +3807,11 @@ export default function Home() {
                         <div>
                           <strong>{employee?.name ?? "Funcionario"}</strong>
                           <span className="payment-meta">
-                            {payment.date} - {payment.kind} - {payment.method}
+                            {new Date(
+                              `${payment.date}T00:00:00`
+                            ).toLocaleDateString(locale)}{" "}
+                            · {paymentKindLabels[payment.kind]} ·{" "}
+                            {payment.method || "Metodo nao informado"}
                           </span>
                           {payment.note ? (
                             <span className="payment-meta">{payment.note}</span>
@@ -3623,7 +3830,7 @@ export default function Home() {
                           >
                             {payment.status === "paid" ? "Pago" : "Previsto"}
                           </span>
-                          <strong>{formatCurrency(payment.amount)}</strong>
+                          <strong>{formatMoney(payment.amount)}</strong>
                           <button
                             className="ghost ghost--small"
                             type="button"
@@ -3664,6 +3871,7 @@ export default function Home() {
       <HomeClock
         timeString={timeString}
         dateString={dateString}
+        locale={locale}
         shiftActive={shiftActive}
         shiftNotice={shiftNotice}
         shiftNoticeTone={shiftNoticeTone}
@@ -3805,6 +4013,74 @@ export default function Home() {
                         }
                       />
                     </div>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Locale</label>
+                      <input
+                        type="text"
+                        value={activeSettings.locale ?? DEFAULT_SETTINGS.locale}
+                        onChange={(event) =>
+                          handleSettingsChange({ locale: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Moeda</label>
+                      <input
+                        type="text"
+                        value={activeSettings.currency ?? DEFAULT_SETTINGS.currency}
+                        onChange={(event) =>
+                          handleSettingsChange({ currency: event.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="inline-row">
+                    <div>
+                      <label>Fuso horario</label>
+                      <input
+                        type="text"
+                        value={activeSettings.timezone ?? DEFAULT_SETTINGS.timezone}
+                        onChange={(event) =>
+                          handleSettingsChange({ timezone: event.target.value })
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label>Inicio ciclo folha (dia)</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={28}
+                        value={
+                          activeSettings.payrollCycleStartDay ??
+                          DEFAULT_SETTINGS.payrollCycleStartDay
+                        }
+                        onChange={(event) =>
+                          handleSettingsChange({
+                            payrollCycleStartDay: Number(event.target.value),
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label>Duracao ciclo folha (dias)</label>
+                    <input
+                      type="number"
+                      min={7}
+                      max={45}
+                      value={
+                        activeSettings.payrollCycleLengthDays ??
+                        DEFAULT_SETTINGS.payrollCycleLengthDays
+                      }
+                      onChange={(event) =>
+                        handleSettingsChange({
+                          payrollCycleLengthDays: Number(event.target.value),
+                        })
+                      }
+                    />
                   </div>
                 </div>
               </section>
@@ -4197,6 +4473,7 @@ export default function Home() {
                         >
                           <option value="daily">Diaria</option>
                           <option value="monthly">Mensal</option>
+                          <option value="hourly">Hora</option>
                         </select>
                       </div>
                       <div>

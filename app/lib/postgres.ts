@@ -29,9 +29,18 @@ export const ensureSchema = () => {
       create table if not exists public.app_state (
         id text primary key,
         data jsonb not null,
-        updated_at timestamptz not null default now()
+        updated_at timestamptz not null default now(),
+        created_at timestamptz not null default now(),
+        schema_version int not null default 1
       );
-    `.then(() => undefined);
+    `
+      .then(() =>
+        sql`alter table public.app_state add column if not exists created_at timestamptz not null default now()`
+      )
+      .then(() =>
+        sql`alter table public.app_state add column if not exists schema_version int not null default 1`
+      )
+      .then(() => undefined);
   }
   return schemaReady;
 };

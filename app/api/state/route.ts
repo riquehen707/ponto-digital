@@ -16,14 +16,19 @@ export async function GET(request: Request) {
       {
         data: unknown;
         updated_at: string;
+        schema_version: number | null;
       }[]
-    >`select data, updated_at from public.app_state where id = ${key} limit 1`;
+    >`select data, updated_at, schema_version from public.app_state where id = ${key} limit 1`;
 
     if (!rows.length) {
       return NextResponse.json({ data: null });
     }
 
-    return NextResponse.json({ data: rows[0].data, updatedAt: rows[0].updated_at });
+    return NextResponse.json({
+      data: rows[0].data,
+      updatedAt: rows[0].updated_at,
+      schemaVersion: rows[0].schema_version ?? 1,
+    });
   } catch (error) {
     console.error("GET /api/state error", error);
     return NextResponse.json(
@@ -49,10 +54,10 @@ export async function POST(request: Request) {
     const sql = getSql();
 
     await sql`
-      insert into public.app_state (id, data, updated_at)
-      values (${key}, ${sql.json(body.data as JSONValue)}, now())
+      insert into public.app_state (id, data, updated_at, schema_version)
+      values (${key}, ${sql.json(body.data as JSONValue)}, now(), 1)
       on conflict (id)
-      do update set data = excluded.data, updated_at = now();
+      do update set data = excluded.data, updated_at = now(), schema_version = excluded.schema_version;
     `;
 
     return NextResponse.json({ ok: true, updatedAt: new Date().toISOString() });

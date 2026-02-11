@@ -1,6 +1,7 @@
 type HomeClockProps = {
   timeString: string;
   dateString: string;
+  locale: string;
   shiftActive: boolean;
   shiftNotice: string;
   shiftNoticeTone: string;
@@ -13,6 +14,7 @@ type HomeClockProps = {
 export default function HomeClock({
   timeString,
   dateString,
+  locale,
   shiftActive,
   shiftNotice,
   shiftNoticeTone,
@@ -40,7 +42,7 @@ export default function HomeClock({
         <span className={`shift-note ${shiftNoticeTone}`}>{shiftNotice}</span>
       ) : shiftActive && openRecordStartAt ? (
         <span className="shift-note">
-          Inicio: {new Date(openRecordStartAt).toLocaleTimeString("pt-BR", {
+          Inicio: {new Date(openRecordStartAt).toLocaleTimeString(locale, {
             hour: "2-digit",
             minute: "2-digit",
           })}
