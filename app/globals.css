@@ -1,12 +1,14 @@
 ﻿:root {
   color-scheme: light;
-  --bg-1: #f6f1e8;
-  --bg-2: #eef3ef;
-  --ink: #1d1c1a;
-  --muted: #5b5f5d;
-  --accent: #e07a5f;
-  --accent-strong: #d35f43;
-  --accent-cool: #2f4858;
+  --bg-1: #f1f6f4;
+  --bg-2: #edf3f7;
+  --ink: #14201b;
+  --muted: #5e6f69;
+  --accent: #ff7a59;
+  --accent-strong: #f05d4b;
+  --accent-cool: #1f3f3a;
+  --accent-rgb: 255, 122, 89;
+  --cool-rgb: 31, 63, 58;
   --panel: rgba(255, 255, 255, 0.7);
   --panel-strong: rgba(255, 255, 255, 0.92);
   --border: rgba(29, 28, 26, 0.12);
@@ -25,7 +27,7 @@ body {
   min-height: 100vh;
   font-family: var(--font-sans), "Sora", "Segoe UI", sans-serif;
   color: var(--ink);
-  background: linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 60%, #f8f3ed 100%);
+  background: linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 60%, #f7fbfa 100%);
   line-height: 1.4;
 }
 
@@ -62,7 +64,11 @@ button {
   height: 520px;
   top: -180px;
   right: -120px;
-  background: radial-gradient(circle at 30% 30%, rgba(224, 122, 95, 0.35), transparent 70%);
+  background: radial-gradient(
+    circle at 30% 30%,
+    rgba(var(--accent-rgb), 0.35),
+    transparent 70%
+  );
 }
 
 .page::after {
@@ -70,7 +76,11 @@ button {
   height: 620px;
   bottom: -260px;
   left: -220px;
-  background: radial-gradient(circle at 60% 40%, rgba(47, 72, 88, 0.18), transparent 70%);
+  background: radial-gradient(
+    circle at 60% 40%,
+    rgba(var(--cool-rgb), 0.18),
+    transparent 70%
+  );
 }
 
 .login-shell {
@@ -195,19 +205,19 @@ button {
   color: #fff;
   font-size: 1.1rem;
   font-weight: 600;
-  box-shadow: 0 18px 40px rgba(224, 122, 95, 0.35);
+  box-shadow: 0 18px 40px rgba(var(--accent-rgb), 0.35);
   transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
 }
 
 .shift-button:hover {
   transform: translateY(-2px) scale(1.01);
-  box-shadow: 0 22px 46px rgba(224, 122, 95, 0.4);
+  box-shadow: 0 22px 46px rgba(var(--accent-rgb), 0.4);
   filter: brightness(1.02);
 }
 
 .shift-button[data-active="true"] {
-  background: linear-gradient(135deg, var(--accent-cool), #243745);
-  box-shadow: 0 18px 40px rgba(47, 72, 88, 0.35);
+  background: linear-gradient(135deg, var(--accent-cool), #162f2b);
+  box-shadow: 0 18px 40px rgba(var(--cool-rgb), 0.35);
 }
 
 .shift-button:disabled {
@@ -237,7 +247,7 @@ button {
 .action-btn:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 2px solid rgba(47, 72, 88, 0.6);
+  outline: 2px solid rgba(var(--cool-rgb), 0.6);
   outline-offset: 3px;
 }
 
@@ -304,7 +314,7 @@ select:focus-visible {
 .config-section {
   padding: 14px;
   border-radius: 18px;
-  border: 1px solid rgba(47, 72, 88, 0.16);
+  border: 1px solid rgba(var(--cool-rgb), 0.16);
   background: rgba(255, 255, 255, 0.8);
 }
 
@@ -421,7 +431,7 @@ select:focus-visible {
   margin-top: 8px;
   padding: 8px 10px;
   border-radius: 12px;
-  background: rgba(224, 122, 95, 0.12);
+  background: rgba(var(--accent-rgb), 0.12);
   color: #7a3c2b;
   font-size: 0.82rem;
 }
@@ -489,8 +499,8 @@ select:focus-visible {
 }
 
 .account-card {
-  background: rgba(47, 72, 88, 0.08);
-  border: 1px solid rgba(47, 72, 88, 0.18);
+  background: rgba(var(--cool-rgb), 0.08);
+  border: 1px solid rgba(var(--cool-rgb), 0.18);
 }
 
 .account-header {
@@ -513,12 +523,12 @@ select:focus-visible {
 }
 
 .role-pill.admin {
-  background: rgba(47, 72, 88, 0.2);
-  color: #2f4858;
+  background: rgba(var(--cool-rgb), 0.2);
+  color: var(--accent-cool);
 }
 
 .role-pill.staff {
-  background: rgba(224, 122, 95, 0.18);
+  background: rgba(var(--accent-rgb), 0.18);
   color: #7a3c2b;
 }
 
@@ -535,7 +545,7 @@ select:focus-visible {
 
 .admin-card {
   position: relative;
-  border: 1px solid rgba(47, 72, 88, 0.2);
+  border: 1px solid rgba(var(--cool-rgb), 0.2);
   background: rgba(255, 255, 255, 0.94);
   overflow: hidden;
 }
@@ -545,7 +555,7 @@ select:focus-visible {
   position: absolute;
   inset: 0 0 auto 0;
   height: 3px;
-  background: linear-gradient(90deg, rgba(47, 72, 88, 0.9), rgba(224, 122, 95, 0.8));
+  background: linear-gradient(90deg, rgba(var(--cool-rgb), 0.9), rgba(var(--accent-rgb), 0.8));
   opacity: 0.9;
 }
 
@@ -567,8 +577,8 @@ select:focus-visible {
   border-radius: 999px;
   font-size: 0.7rem;
   font-weight: 600;
-  background: rgba(47, 72, 88, 0.16);
-  color: #2f4858;
+  background: rgba(var(--cool-rgb), 0.16);
+  color: var(--accent-cool);
 }
 
 .admin-tabs {
@@ -581,16 +591,16 @@ select:focus-visible {
 .admin-tab {
   padding: 6px 12px;
   border-radius: 999px;
-  border: 1px solid rgba(47, 72, 88, 0.18);
-  background: rgba(47, 72, 88, 0.08);
+  border: 1px solid rgba(var(--cool-rgb), 0.18);
+  background: rgba(var(--cool-rgb), 0.08);
   font-size: 0.78rem;
   font-weight: 600;
-  color: #2f4858;
+  color: var(--accent-cool);
   transition: background 0.15s ease, transform 0.15s ease;
 }
 
 .admin-tab.is-active {
-  background: rgba(47, 72, 88, 0.18);
+  background: rgba(var(--cool-rgb), 0.18);
   transform: translateY(-1px);
 }
 
@@ -648,6 +658,53 @@ select:focus-visible {
   margin: 12px 0;
 }
 
+.dashboard-subtitle {
+  margin-bottom: 8px;
+}
+
+.dashboard-highlights {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+@media (min-width: 620px) {
+  .dashboard-highlights {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.dashboard-highlight {
+  background: linear-gradient(
+    135deg,
+    rgba(var(--cool-rgb), 0.08),
+    rgba(255, 255, 255, 0.95)
+  );
+  border: 1px solid rgba(var(--cool-rgb), 0.16);
+}
+
+.coverage-chip {
+  margin-top: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: rgba(var(--cool-rgb), 0.12);
+  color: var(--accent-cool);
+  display: inline-flex;
+}
+
+.coverage-chip.low {
+  background: rgba(178, 74, 74, 0.18);
+  color: #7d3535;
+}
+
+.coverage-chip.high {
+  background: rgba(var(--cool-rgb), 0.18);
+  color: var(--accent-cool);
+}
+
 .finance-details {
   margin: 12px 0;
   padding: 10px 12px;
@@ -660,7 +717,7 @@ select:focus-visible {
   cursor: pointer;
   font-weight: 600;
   font-size: 0.85rem;
-  color: #2f4858;
+  color: var(--accent-cool);
   margin-bottom: 6px;
 }
 
@@ -673,8 +730,8 @@ select:focus-visible {
 .highlight-card {
   padding: 12px;
   border-radius: 14px;
-  border: 1px solid rgba(47, 72, 88, 0.16);
-  background: linear-gradient(135deg, rgba(47, 72, 88, 0.08), #fff);
+  border: 1px solid rgba(var(--cool-rgb), 0.16);
+  background: linear-gradient(135deg, rgba(var(--cool-rgb), 0.08), #fff);
   display: grid;
   gap: 4px;
   font-size: 0.85rem;
@@ -742,9 +799,9 @@ select:focus-visible {
   justify-content: center;
   padding: 8px 12px;
   border-radius: 999px;
-  border: 1px solid rgba(47, 72, 88, 0.2);
-  background: rgba(47, 72, 88, 0.08);
-  color: #2f4858;
+  border: 1px solid rgba(var(--cool-rgb), 0.2);
+  background: rgba(var(--cool-rgb), 0.08);
+  color: var(--accent-cool);
   font-size: 0.78rem;
   font-weight: 600;
   text-decoration: none;
@@ -754,8 +811,8 @@ select:focus-visible {
 
 .admin-nav-pill:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 14px rgba(47, 72, 88, 0.12);
-  background: rgba(47, 72, 88, 0.16);
+  box-shadow: 0 6px 14px rgba(var(--cool-rgb), 0.12);
+  background: rgba(var(--cool-rgb), 0.16);
 }
 
 .admin-tools {
@@ -769,7 +826,7 @@ select:focus-visible {
   margin-top: 12px;
   padding: 10px 12px;
   border-radius: 12px;
-  background: rgba(47, 72, 88, 0.08);
+  background: rgba(var(--cool-rgb), 0.08);
   font-size: 0.85rem;
   color: var(--muted);
 }
@@ -795,7 +852,7 @@ select:focus-visible {
   padding: 10px 12px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.8);
-  border: 1px solid rgba(47, 72, 88, 0.12);
+  border: 1px solid rgba(var(--cool-rgb), 0.12);
 }
 
 .admin-link-row > div {
@@ -860,17 +917,17 @@ select:focus-visible {
 .admin-btn {
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(47, 72, 88, 0.2);
-  background: rgba(47, 72, 88, 0.08);
+  border: 1px solid rgba(var(--cool-rgb), 0.2);
+  background: rgba(var(--cool-rgb), 0.08);
   font-size: 0.85rem;
   font-weight: 600;
-  color: #2f4858;
+  color: var(--accent-cool);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .admin-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 8px 16px rgba(47, 72, 88, 0.15);
+  box-shadow: 0 8px 16px rgba(var(--cool-rgb), 0.15);
 }
 
 .card-header {
@@ -1014,7 +1071,7 @@ select:focus-visible {
   flex-direction: column;
   justify-content: space-between;
   transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
-  --calendar-accent: rgba(47, 72, 88, 0.55);
+  --calendar-accent: rgba(var(--cool-rgb), 0.55);
 }
 
 .calendar-day:hover {
@@ -1055,7 +1112,7 @@ select:focus-visible {
   min-width: 18px;
   height: 18px;
   border-radius: 999px;
-  background: rgba(224, 122, 95, 0.9);
+  background: rgba(var(--accent-rgb), 0.9);
   color: #fff;
   font-size: 0.65rem;
   display: inline-flex;
@@ -1075,21 +1132,21 @@ select:focus-visible {
 .calendar-day.work {
   background: linear-gradient(
     135deg,
-    rgba(224, 122, 95, 0.22),
+    rgba(var(--accent-rgb), 0.22),
     rgba(255, 255, 255, 0.92)
   );
   color: #7a3c2b;
-  --calendar-accent: rgba(224, 122, 95, 0.9);
+  --calendar-accent: rgba(var(--accent-rgb), 0.9);
 }
 
 .calendar-day.off {
   background: linear-gradient(
     135deg,
-    rgba(47, 72, 88, 0.18),
+    rgba(var(--cool-rgb), 0.18),
     rgba(255, 255, 255, 0.92)
   );
-  color: #2f4858;
-  --calendar-accent: rgba(47, 72, 88, 0.75);
+  color: var(--accent-cool);
+  --calendar-accent: rgba(var(--cool-rgb), 0.75);
 }
 
 .calendar-day.is-outside {
@@ -1098,14 +1155,14 @@ select:focus-visible {
 }
 
 .calendar-day.is-today {
-  border-color: rgba(47, 72, 88, 0.6);
-  box-shadow: 0 0 0 2px rgba(47, 72, 88, 0.2);
+  border-color: rgba(var(--cool-rgb), 0.6);
+  box-shadow: 0 0 0 2px rgba(var(--cool-rgb), 0.2);
 }
 
 .calendar-day.is-selected {
   transform: translateY(-2px);
   border-color: var(--accent);
-  box-shadow: 0 12px 24px rgba(224, 122, 95, 0.18);
+  box-shadow: 0 12px 24px rgba(var(--accent-rgb), 0.18);
 }
 
 .calendar-day:disabled {
@@ -1149,8 +1206,8 @@ select:focus-visible {
   width: 20px;
   height: 20px;
   border-radius: 8px;
-  background: rgba(47, 72, 88, 0.15);
-  color: #2f4858;
+  background: rgba(var(--cool-rgb), 0.15);
+  color: var(--accent-cool);
   font-size: 0.6rem;
   font-weight: 700;
   display: inline-flex;
@@ -1202,11 +1259,11 @@ select:focus-visible {
 }
 
 .legend-dot.work {
-  background: rgba(224, 122, 95, 0.6);
+  background: rgba(var(--accent-rgb), 0.6);
 }
 
 .legend-dot.off {
-  background: rgba(47, 72, 88, 0.6);
+  background: rgba(var(--cool-rgb), 0.6);
 }
 
 .legend-dot.coverage-low {
@@ -1258,18 +1315,18 @@ select:focus-visible {
 }
 
 .day-entry.work {
-  border-color: rgba(224, 122, 95, 0.3);
-  background: rgba(224, 122, 95, 0.12);
+  border-color: rgba(var(--accent-rgb), 0.3);
+  background: rgba(var(--accent-rgb), 0.12);
 }
 
 .day-entry.manager {
-  border-color: rgba(47, 72, 88, 0.3);
-  background: rgba(47, 72, 88, 0.1);
+  border-color: rgba(var(--cool-rgb), 0.3);
+  background: rgba(var(--cool-rgb), 0.1);
 }
 
 .day-entry.cleaning {
-  border-color: rgba(47, 72, 88, 0.3);
-  background: rgba(47, 72, 88, 0.08);
+  border-color: rgba(var(--cool-rgb), 0.3);
+  background: rgba(var(--cool-rgb), 0.08);
 }
 
 .entry-note {
@@ -1296,18 +1353,18 @@ select:focus-visible {
   border-radius: 999px;
   font-size: 0.75rem;
   font-weight: 600;
-  background: rgba(47, 72, 88, 0.12);
-  color: #2f4858;
+  background: rgba(var(--cool-rgb), 0.12);
+  color: var(--accent-cool);
 }
 
 .day-pill.work {
-  background: rgba(224, 122, 95, 0.18);
+  background: rgba(var(--accent-rgb), 0.18);
   color: #7a3c2b;
 }
 
 .day-pill.off {
-  background: rgba(47, 72, 88, 0.12);
-  color: #2f4858;
+  background: rgba(var(--cool-rgb), 0.12);
+  color: var(--accent-cool);
 }
 
 .day-shift {
@@ -1708,13 +1765,13 @@ select:focus-visible {
 }
 
 .status-pill.pending {
-  background: rgba(224, 122, 95, 0.2);
+  background: rgba(var(--accent-rgb), 0.2);
   color: #7a3c2b;
 }
 
 .status-pill.approved {
-  background: rgba(47, 72, 88, 0.2);
-  color: #2f4858;
+  background: rgba(var(--cool-rgb), 0.2);
+  color: var(--accent-cool);
 }
 
 .status-pill.denied {
@@ -1726,11 +1783,11 @@ select:focus-visible {
   width: 8px;
   height: 8px;
   border-radius: 999px;
-  background: rgba(224, 122, 95, 0.8);
+  background: rgba(var(--accent-rgb), 0.8);
 }
 
 .request-dot.approved {
-  background: rgba(47, 72, 88, 0.8);
+  background: rgba(var(--cool-rgb), 0.8);
 }
 
 .request-dot.denied {
@@ -1738,11 +1795,11 @@ select:focus-visible {
 }
 
 .calendar-day.request-pending {
-  border-color: rgba(224, 122, 95, 0.6);
+  border-color: rgba(var(--accent-rgb), 0.6);
 }
 
 .calendar-day.request-approved {
-  border-color: rgba(47, 72, 88, 0.6);
+  border-color: rgba(var(--cool-rgb), 0.6);
 }
 
 .calendar-day.request-denied {
@@ -1750,7 +1807,7 @@ select:focus-visible {
 }
 
 .legend-dot.request {
-  background: rgba(224, 122, 95, 0.8);
+  background: rgba(var(--accent-rgb), 0.8);
 }
 
 .employee-list {
@@ -1845,8 +1902,8 @@ select:focus-visible {
 }
 
 .workday-btn.active {
-  background: rgba(224, 122, 95, 0.18);
-  border-color: rgba(224, 122, 95, 0.4);
+  background: rgba(var(--accent-rgb), 0.18);
+  border-color: rgba(var(--accent-rgb), 0.4);
   color: #7a3c2b;
 }
 
@@ -1909,8 +1966,8 @@ select:focus-visible {
 }
 
 .org-item.is-active {
-  border-color: rgba(224, 122, 95, 0.6);
-  box-shadow: 0 0 0 2px rgba(224, 122, 95, 0.15);
+  border-color: rgba(var(--accent-rgb), 0.6);
+  box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.15);
 }
 
 .org-actions {
@@ -2023,8 +2080,8 @@ select:focus-visible {
   padding: 10px 12px;
   border-radius: 12px;
   font-size: 0.85rem;
-  background: rgba(47, 72, 88, 0.12);
-  color: #2f4858;
+  background: rgba(var(--cool-rgb), 0.12);
+  color: var(--accent-cool);
 }
 
 .status-banner.error {
@@ -2091,3 +2148,5 @@ select:focus-visible {
     align-items: center;
   }
 }
+
+

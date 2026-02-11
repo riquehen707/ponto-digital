@@ -1298,15 +1298,15 @@ export default function Home() {
     return endMinutes - startMinutes;
   }
 
-  const selectedDaySummary = useMemo(() => {
+  const getDaySummary = (date: Date) => {
     if (!activeOrg) {
       return null;
     }
-    const weekday = selectedDate.getDay();
+    const weekday = date.getDay();
     const scheduledEmployees = activeOrg.employees.filter(
       (employee) => employee.role !== "admin" && employee.workDays.includes(weekday)
     );
-    const requestEntry = teamRequestMap.get(selectedDateKey);
+    const requestEntry = teamRequestMap.get(getLocalDateKey(date));
     const approvedIds = requestEntry?.approved ?? new Set<string>();
     const pendingCount = requestEntry?.pending.size ?? 0;
     const availableEmployees = scheduledEmployees.filter(
@@ -1334,7 +1334,17 @@ export default function Home() {
       minStaff,
       maxStaff,
     };
-  }, [activeOrg, getShiftMinutes, selectedDate, selectedDateKey, teamRequestMap]);
+  };
+
+  const selectedDaySummary = useMemo(
+    () => getDaySummary(selectedDate),
+    [activeOrg, getShiftMinutes, selectedDate, teamRequestMap]
+  );
+
+  const todaySummary = useMemo(
+    () => getDaySummary(now),
+    [activeOrg, getShiftMinutes, now, teamRequestMap]
+  );
 
   const activeTasks = useMemo(
     () => (activeOrg ? activeOrg.tasks.filter((task) => task.active) : []),
@@ -3388,6 +3398,54 @@ export default function Home() {
                 <span className="admin-pill">Produtividade</span>
               </div>
               <p>Visao geral do periodo selecionado.</p>
+              <div className="dashboard-subtitle">
+                <span className="entry-note">
+                  Periodo: {reportRangeLabel} · Inicio{" "}
+                  {reportStart.toLocaleDateString(locale)}
+                </span>
+              </div>
+              <div className="dashboard-highlights">
+                <div className="highlight-card dashboard-highlight">
+                  <span>Equipe online</span>
+                  <strong>{openShifts.length}</strong>
+                  <span className="entry-note">Turnos ativos agora</span>
+                </div>
+                <div className="highlight-card dashboard-highlight">
+                  <span>Horas previstas hoje</span>
+                  <strong>
+                    {todaySummary
+                      ? formatMinutes(todaySummary.expectedMinutes)
+                      : "--"}
+                  </strong>
+                  <span className="entry-note">
+                    Equipe{" "}
+                    {todaySummary
+                      ? `${todaySummary.availableEmployees.length}/${todaySummary.scheduledEmployees.length}`
+                      : "--"}
+                  </span>
+                </div>
+                <div className="highlight-card dashboard-highlight">
+                  <span>Cobertura hoje</span>
+                  <strong>
+                    {todaySummary
+                      ? todaySummary.coverage === "low"
+                        ? "Baixa"
+                        : todaySummary.coverage === "high"
+                        ? "Alta"
+                        : "Ok"
+                      : "--"}
+                  </strong>
+                  <span className={`coverage-chip ${todaySummary?.coverage ?? ""}`}>
+                    Meta {todaySummary?.minStaff ?? "--"}-
+                    {todaySummary?.maxStaff ?? "--"}
+                  </span>
+                </div>
+                <div className="highlight-card dashboard-highlight">
+                  <span>Folgas pendentes</span>
+                  <strong>{pendingRequests}</strong>
+                  <span className="entry-note">Equipe</span>
+                </div>
+              </div>
               <div className="dashboard-grid">
                 <div className="stat">
                   <span className="stat-label">Horas totais</span>
